@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 import flowsom as fs
 
 # ── 1. Load all wells ──────────────────────────────────────────────────────────
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "ddPCR_data/MIP113/TA421-1_pl01")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "ddPCR_data/230418_MIP122_TRT01_TA421-8")
 csv_files = sorted(glob.glob(os.path.join(DATA_DIR, "*.csv")))
 print(f"Found {len(csv_files)} CSV files.")
 
