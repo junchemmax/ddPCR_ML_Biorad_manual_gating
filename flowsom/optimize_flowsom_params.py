@@ -45,6 +45,11 @@ XDIM_RANGE = (6, 16)    # even integers only
 YDIM_RANGE = (6, 16)
 RLEN_RANGE = (5, 100)
 
+# All outputs go here (created automatically)
+OUT_DIR    = os.path.join(os.path.dirname(__file__), "output")
+TRIALS_DIR = os.path.join(OUT_DIR, "trials")
+os.makedirs(TRIALS_DIR, exist_ok=True)
+
 optuna.logging.set_verbosity(optuna.logging.WARNING)  # quiet inner logs
 
 # ── 1. Load data once ──────────────────────────────────────────────────────────
@@ -66,10 +71,15 @@ combined = ad.concat(adatas, merge="same")
 data     = combined.X.astype(np.float64)
 print(f"Combined: {combined.n_obs:,} droplets across {len(csv_files)} wells.\n")
 
-# Pre-draw the evaluation subsample index (fixed across all trials for fairness)
+# Pre-draw fixed subsample indices (shared across all trials for fair comparison)
 rng       = np.random.default_rng(SEED)
 eval_idx  = rng.choice(len(data), min(EVAL_PTS, len(data)), replace=False)
 eval_data = data[eval_idx]
+
+PLOT_PTS  = 50_000
+plot_idx  = np.random.default_rng(SEED + 1).choice(len(data), min(PLOT_PTS, len(data)), replace=False)
+plot_idx.sort()
+plot_data = data[plot_idx]
 
 
 # ── 2. Optuna objective ────────────────────────────────────────────────────────
@@ -90,6 +100,40 @@ def _run_flowsom(xdim: int, ydim: int, rlen: int, seed: int = SEED):
     return codes, node_meta, bmu_idx
 
 
+def _save_trial_png(trial_number: int, xdim: int, ydim: int, rlen: int,
+                    node_meta: np.ndarray, bmu_idx: np.ndarray, score: float) -> None:
+    """Save a scatter plot for one Optuna trial.
+
+    All trials use the same fixed subsample (plot_idx) so cluster boundaries
+    are directly comparable across PNGs.
+    Filename encodes the score so files sort naturally from best to worst:
+        trial_sil+0.4231_t003_xdim10_ydim12_rlen25.png
+    """
+    X_p  = plot_data
+    mc_p = (node_meta[bmu_idx] + 1)[plot_idx]
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+    for mc in sorted(np.unique(mc_p)):
+        mask = mc_p == mc
+        ax.scatter(X_p[mask, 1], X_p[mask, 0], s=0.4, alpha=0.3,
+                   label=f"C{mc}", rasterized=True)
+    ax.set_xlabel("Ch2Amplitude")
+    ax.set_ylabel("Ch1Amplitude")
+    ax.legend(markerscale=6, title="MC", fontsize=7)
+    ax.set_title(
+        f"Trial {trial_number:03d}  xdim={xdim} ydim={ydim} rlen={rlen}  "
+        f"sil={score:.4f}",
+        fontsize=9,
+    )
+    plt.tight_layout()
+    fname = (
+        f"trial_sil{score:+.4f}_t{trial_number:03d}"
+        f"_xdim{xdim}_ydim{ydim}_rlen{rlen}.png"
+    )
+    fig.savefig(os.path.join(TRIALS_DIR, fname), dpi=100)
+    plt.close(fig)
+
+
 def objective(trial: optuna.Trial) -> float:
     xdim = trial.suggest_int("xdim", XDIM_RANGE[0], XDIM_RANGE[1], step=2)
     ydim = trial.suggest_int("ydim", YDIM_RANGE[0], YDIM_RANGE[1], step=2)
@@ -101,9 +145,11 @@ def objective(trial: optuna.Trial) -> float:
 
     # Guard: silhouette undefined if only 1 unique label appears in subsample
     if len(np.unique(labels_eval)) < 2:
+        _save_trial_png(trial.number, xdim, ydim, rlen, node_meta, bmu_idx, score=-1.0)
         return -1.0
 
     score = silhouette_score(eval_data, labels_eval, sample_size=None)
+    _save_trial_png(trial.number, xdim, ydim, rlen, node_meta, bmu_idx, score)
     return float(score)
 
 
@@ -113,18 +159,46 @@ sampler = optuna.samplers.TPESampler(seed=SEED)
 study   = optuna.create_study(direction="maximize", sampler=sampler)
 study.optimize(objective, n_trials=N_TRIALS, show_progress_bar=True)
 
-best = study.best_params
-print(f"\nBest parameters found:")
-print(f"  XDIM = {best['xdim']}")
-print(f"  YDIM = {best['ydim']}")
-print(f"  RLEN = {best['rlen']}")
-print(f"  Silhouette Score = {study.best_value:.4f}")
+print(f"Trial PNGs saved → {TRIALS_DIR}  (sort by filename to rank by silhouette score)")
+
+auto_best = study.best_params
+auto_score = study.best_value
+print(f"\nBest parameters found (by silhouette score):")
+print(f"  XDIM = {auto_best['xdim']}")
+print(f"  YDIM = {auto_best['ydim']}")
+print(f"  RLEN = {auto_best['rlen']}")
+print(f"  Silhouette Score = {auto_score:.4f}")
 
 # ── 4. Top-5 trials summary ────────────────────────────────────────────────────
 print("\nTop-5 trials:")
 trials_df = study.trials_dataframe()[["number", "value", "params_xdim", "params_ydim", "params_rlen"]]
 trials_df = trials_df.rename(columns={"value": "silhouette"}).sort_values("silhouette", ascending=False)
 print(trials_df.head(5).to_string(index=False))
+
+# ── 4b. Manual override ────────────────────────────────────────────────────────
+print(f"\nReview the PNGs in: {TRIALS_DIR}")
+print("Press Enter to accept the automatic best, or type a trial number to use instead.")
+_choice = input("Manual trial number (or Enter to skip): ").strip()
+
+if _choice == "":
+    best       = auto_best
+    best_score = auto_score
+    print("Using automatic best.")
+else:
+    try:
+        _trial_num = int(_choice)
+        _trial     = study.trials[_trial_num]
+        best       = _trial.params
+        best_score = _trial.value if _trial.value is not None else float("nan")
+        print(
+            f"Using trial {_trial_num}: "
+            f"xdim={best['xdim']}  ydim={best['ydim']}  rlen={best['rlen']}  "
+            f"sil={best_score:.4f}"
+        )
+    except (ValueError, IndexError) as e:
+        print(f"Invalid input ({e}). Falling back to automatic best.")
+        best       = auto_best
+        best_score = auto_score
 
 # ── 5. Final clustering with best params ───────────────────────────────────────
 XDIM, YDIM, RLEN = best["xdim"], best["ydim"], best["rlen"]
@@ -161,7 +235,7 @@ ax.text(0.01, 0.01, param_text, transform=ax.transAxes, fontsize=7,
 plt.tight_layout()
 
 tag     = f"_opt_xdim{XDIM}_ydim{YDIM}_rlen{RLEN}"
-out_png = os.path.join(os.path.dirname(__file__), f"ddPCR_clusters{tag}.png")
+out_png = os.path.join(OUT_DIR, f"ddPCR_clusters{tag}.png")
 plt.savefig(out_png, dpi=150)
 print(f"\nSaved scatter plot → {out_png}")
 
@@ -178,7 +252,7 @@ counts["total"] = counts.sum(axis=1)
 for col in [c for c in counts.columns if c.startswith("cluster_")]:
     counts[col.replace("cluster_", "pct_")] = (counts[col] / counts["total"] * 100).round(2)
 
-out_csv = os.path.join(os.path.dirname(__file__), f"ddPCR_cluster_counts{tag}.csv")
+out_csv = os.path.join(OUT_DIR, f"ddPCR_cluster_counts{tag}.csv")
 counts.to_csv(out_csv)
 print(f"Saved per-well counts  → {out_csv}")
 print("\nPer-well summary (first 10 wells):")
@@ -213,9 +287,9 @@ features["n_clusters"]     = N_CLUSTERS
 features["best_xdim"]      = XDIM
 features["best_ydim"]      = YDIM
 features["best_rlen"]      = RLEN
-features["best_silhouette"] = round(study.best_value, 6)
+features["best_silhouette"] = round(best_score, 6)
 
-meta_path = os.path.join(os.path.dirname(__file__), "meta_dataset.csv")
+meta_path = os.path.join(OUT_DIR, "meta_dataset.csv")
 meta_row  = pd.DataFrame([features])
 if os.path.exists(meta_path):
     existing = pd.read_csv(meta_path)
@@ -232,27 +306,12 @@ print("Run  train_param_predictor.py  once you have collected enough datasets.")
 try:
     import plotly  # noqa: F401
     fig_imp = optuna.visualization.plot_param_importances(study)
-    out_imp = os.path.join(os.path.dirname(__file__), "optuna_param_importances.html")
+    out_imp = os.path.join(OUT_DIR, "optuna_param_importances.html")
     fig_imp.write_html(out_imp)
     print(f"\nSaved param importance chart → {out_imp}")
 
     fig_his = optuna.visualization.plot_optimization_history(study)
-    out_his = os.path.join(os.path.dirname(__file__), "optuna_optimization_history.html")
-    fig_his.write_html(out_his)
-    print(f"Saved optimisation history  → {out_his}")
-except ImportError:
-    print("\n(Install plotly for interactive Optuna visualisations: pip install plotly)")
-
-# ── 8. Optuna visualisation (optional, requires plotly) ────────────────────────
-try:
-    import plotly  # noqa: F401
-    fig_imp = optuna.visualization.plot_param_importances(study)
-    out_imp = os.path.join(os.path.dirname(__file__), "optuna_param_importances.html")
-    fig_imp.write_html(out_imp)
-    print(f"\nSaved param importance chart → {out_imp}")
-
-    fig_his = optuna.visualization.plot_optimization_history(study)
-    out_his = os.path.join(os.path.dirname(__file__), "optuna_optimization_history.html")
+    out_his = os.path.join(OUT_DIR, "optuna_optimization_history.html")
     fig_his.write_html(out_his)
     print(f"Saved optimisation history  → {out_his}")
 except ImportError:
