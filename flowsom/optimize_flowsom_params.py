@@ -259,7 +259,7 @@ print("\nPer-well summary (first 10 wells):")
 print(counts.head(10).to_string())
 
 # ── 8. Append to meta-dataset (for supervised predictor training) ───────────────
-def extract_features(X: np.ndarray, n_wells: int) -> dict:
+def extract_features(X: np.ndarray, n_wells: int, combined=None) -> dict:
     """Compute summary statistics from raw amplitude data for meta-learning."""
     feat: dict = {}
     feat["n_droplets"] = len(X)
@@ -273,15 +273,31 @@ def extract_features(X: np.ndarray, n_wells: int) -> dict:
         feat[f"{ch}_median"] = float(np.median(vals))
         feat[f"{ch}_p75"]    = float(np.percentile(vals, 75))
         feat[f"{ch}_p95"]    = float(np.percentile(vals, 95))
-        feat[f"{ch}_iqr"]    = feat[f"{ch}_p75"] - feat[f"{ch}_p25"]
-        feat[f"{ch}_range"]  = float(vals.max() - vals.min())
-        feat[f"{ch}_cv"]     = feat[f"{ch}_std"] / (feat[f"{ch}_mean"] + 1e-9)
         feat[f"{ch}_skew"]   = float(skew(vals))
         feat[f"{ch}_kurt"]   = float(kurtosis(vals))
+        # Bimodality coefficient: >0.555 suggests bimodality
+        feat[f"{ch}_bimodality"] = (feat[f"{ch}_skew"] ** 2 + 1) / (feat[f"{ch}_kurt"] + 3 + 1e-9)
+        # Log-space shape (captures behaviour not visible in linear space)
+        log_vals = np.log1p(np.clip(vals, 0, None))
+        feat[f"{ch}_log_std"]  = float(np.std(log_vals))
+        feat[f"{ch}_log_skew"] = float(skew(log_vals))
+        # Outlier fraction (beyond ±3 std)
+        mu, sigma = feat[f"{ch}_mean"], feat[f"{ch}_std"]
+        feat[f"{ch}_outlier_frac"] = float(np.mean((vals < mu - 3 * sigma) | (vals > mu + 3 * sigma)))
     feat["ch1_ch2_corr"] = float(np.corrcoef(X[:, 0], X[:, 1])[0, 1])
+    # Per-well variability (requires combined AnnData with obs["well"])
+    if combined is not None:
+        for i, ch in enumerate(["ch1", "ch2"]):
+            well_means = (
+                pd.DataFrame({"well": combined.obs["well"].values, "val": combined.X[:, i]})
+                .groupby("well")["val"].mean()
+            )
+            feat[f"well_cv_{ch}"] = float(well_means.std() / (well_means.mean() + 1e-9))
+        well_counts = pd.Series(combined.obs["well"].values).value_counts()
+        feat["well_cv_total"] = float(well_counts.std() / (well_counts.mean() + 1e-9))
     return feat
 
-features = extract_features(data, n_wells=len(csv_files))
+features = extract_features(data, n_wells=len(csv_files), combined=combined)
 features["dataset"]        = os.path.basename(DATA_DIR)
 features["n_clusters"]     = N_CLUSTERS
 features["best_xdim"]      = XDIM
