@@ -49,7 +49,7 @@ print(f"Combined: {combined.n_obs:,} droplets across {len(csv_files)} wells.")
 N_CLUSTERS = 4
 XDIM       = 10   # default 10. test 8, 10, 12, 14, 16
 YDIM       = 10   # default 10. test 8, 10, 12, 14, 16
-RLEN       = 25   # default 10. test 5, 10, 25, 50, 100
+RLEN       = 10   # default 10. test 5, 10, 25, 50, 100
 SEED       = 42
 
 n_nodes    = XDIM * YDIM
