@@ -39,7 +39,7 @@ N_CLUST_RANGE = (2, 4)  # n_clusters is now optimised by Optuna
 SEED          = 42      # reproducibility
 N_TRIALS   = 40         # Optuna trials (≈2-5 min on a laptop)
 EVAL_PTS   = 50_000      # subsample size for silhouette (keeps it fast)
-N_JOBS = 12  # parallel jobs for silhouette_score (set to 1 if you get memory issues)
+N_JOBS = -1  # parallel jobs for silhouette_score (set to 1 if you get memory issues)
 
 # Search space – feel free to widen
 XDIM_RANGE = (6, 16)    # even integers only
