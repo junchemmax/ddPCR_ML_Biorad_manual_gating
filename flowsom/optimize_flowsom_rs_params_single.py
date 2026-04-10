@@ -21,6 +21,7 @@ import anndata as ad
 import flowsom_rs
 import matplotlib
 matplotlib.use("Agg")
+from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 plt.style.use("default")
 import numpy as np
@@ -108,16 +109,16 @@ def _run_flowsom(xdim: int, ydim: int, rlen: int, n_clusters: int, seed: int = S
 
 def _save_trial_png(trial_number: int, xdim: int, ydim: int, rlen: int, n_clusters: int,
                     node_meta: np.ndarray, bmu_idx: np.ndarray, score: float) -> None:
-    """Save a scatter plot for one Optuna trial."""
+    """Save a scatter plot for one Optuna trial (thread-safe: no pyplot globals)."""
     X_p  = plot_data
     mc_p = (node_meta[bmu_idx] + 1)[plot_idx]
 
-    fig, ax = plt.subplots(figsize=(5, 4), facecolor="white")
-    ax.set_facecolor("white")
+    # Use Figure() directly — avoids the shared pyplot figure registry
+    fig = Figure(figsize=(5, 4), facecolor="white")
+    ax  = fig.add_subplot(111, facecolor="white")
     for mc in sorted(np.unique(mc_p)):
         mask = mc_p == mc
-        ax.scatter(X_p[mask, 1], X_p[mask, 0], s=2, alpha=0.5,
-                   label=f"C{mc}")
+        ax.scatter(X_p[mask, 1], X_p[mask, 0], s=3, alpha=0.5, label=f"C{mc}")
     ax.set_xlabel("Ch2Amplitude")
     ax.set_ylabel("Ch1Amplitude")
     ax.legend(markerscale=6, title="MC", fontsize=7)
@@ -126,13 +127,12 @@ def _save_trial_png(trial_number: int, xdim: int, ydim: int, rlen: int, n_cluste
         f"sil={score:.4f}",
         fontsize=9,
     )
-    plt.tight_layout()
+    fig.tight_layout()
     fname = (
         f"trial_sil{score:+.4f}_t{trial_number:03d}"
         f"_xdim{xdim}_ydim{ydim}_rlen{rlen}_nc{n_clusters}.png"
     )
     fig.savefig(os.path.join(TRIALS_DIR, fname), dpi=100, facecolor="white")
-    plt.close(fig)
 
 
 def objective(trial: optuna.Trial) -> float:
@@ -223,14 +223,16 @@ print(combined.obs["metacluster"].value_counts().sort_index())
 max_pts  = 200_000
 plot_idx = np.random.default_rng(0).choice(combined.n_obs, min(max_pts, combined.n_obs), replace=False)
 plot_idx.sort()
-X        = combined.X[plot_idx]
-mc_plot  = combined.obs["metacluster"].values[plot_idx]
+X        = np.asarray(combined.X[plot_idx], dtype=np.float64)   # ensure dense float
+mc_plot  = np.asarray(combined.obs["metacluster"].values[plot_idx], dtype=int)
 
+plt.close("all")          # discard figures left over from parallel workers
+plt.style.use("default")  # restore clean rcParams after parallel corruption
 fig, ax = plt.subplots(figsize=(6, 5), facecolor="white")
 ax.set_facecolor("white")
 for mc in sorted(np.unique(mc_plot)):
     mask = mc_plot == mc
-    ax.scatter(X[mask, 1], X[mask, 0], s=1.5, alpha=0.4, label=f"Cluster {mc}")
+    ax.scatter(X[mask, 1], X[mask, 0], s=5, alpha=0.6, label=f"Cluster {mc}")
 ax.set_xlabel("Ch2Amplitude")
 ax.set_ylabel("Ch1Amplitude")
 ax.legend(markerscale=8, title="Metacluster")
