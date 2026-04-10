@@ -311,10 +311,10 @@ def process_csv(csv_file: str) -> None:
     features = extract_features(data)
     features["dataset"]          = os.path.splitext(os.path.basename(csv_file))[0]
     features["best_n_clusters"]  = N_CLUSTERS
-    features["best_xdim"]        = XDIM
-    features["best_ydim"]        = YDIM
-    features["best_rlen"]        = RLEN
-    features["best_silhouette"]  = round(best_score, 6)
+    features["best_xdim"]        = float("nan") if is_one_cluster else XDIM
+    features["best_ydim"]        = float("nan") if is_one_cluster else YDIM
+    features["best_rlen"]        = float("nan") if is_one_cluster else RLEN
+    features["best_silhouette"]  = float("nan") if is_one_cluster else round(best_score, 6)
 
     if skip_meta:
         print("\nMeta-dataset entry skipped (user requested 'skip').")
