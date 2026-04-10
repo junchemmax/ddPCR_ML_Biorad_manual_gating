@@ -1,0 +1,3 @@
+aws s3 sync "C:\Users\HQCHEJUN\Downloads\ddPCR_ML\ddPCR_data" s3://ddpcr-ml-data/ddPCR_data
+
+aws s3 cp "C:\Users\HQCHEJUN\Downloads\ddPCR_ML\flowsom\output\meta_dataset.csv" s3://ddpcr-ml-data/meta_dataset.csv
