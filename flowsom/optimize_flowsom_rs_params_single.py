@@ -1,36 +1,17 @@
 """
-AWS / EC2 version of optimize_flowsom_params.py
-================================================
-Identical logic to the local version but the interactive input() prompt is
-replaced by CLI arguments so the script can run fully unattended on EC2.
+Bayesian hyperparameter optimisation for FlowSOM XDIM / YDIM / RLEN.
+Single-CSV version – runs on one Amplitude CSV file instead of a whole folder.
 
 Usage
 -----
-Phase 1 – run optimisation, skip meta-dataset (review PNGs locally first):
-    python optimize_flowsom_params_aws.py --data-dir /path/to/dataset --skip-meta
-
-Phase 2 – re-run with chosen trial, save to meta-dataset:
-    python optimize_flowsom_params_aws.py --data-dir /path/to/dataset --trial 7 --save-meta
-
-Phase 2 (auto best) – use Optuna best, save to meta-dataset:
-    python optimize_flowsom_params_aws.py --data-dir /path/to/dataset --save-meta
-
-CLI reference
--------------
-  --data-dir   PATH    Path to the dataset folder containing *.csv files.
-                       Defaults to the same hardcoded path as the local version.
-  --trial      INT     Use this Optuna trial number for final clustering.
-                       Omit to use the automatic best.
-  --skip-meta          Do NOT append to meta_dataset.csv (default behaviour).
-  --save-meta          Append to meta_dataset.csv.
+Edit CSV_FILE below, then run:
+    python optimize_flowsom_rs_params_single.py
 
 Install once:
-    pip install optuna scipy anndata flowsom-rs scikit-learn matplotlib pandas plotly
+    pip install optuna scipy anndata flowsom-rs scikit-learn matplotlib pandas
 """
 from __future__ import annotations
 
-import argparse
-import glob
 import os
 import warnings
 
@@ -41,6 +22,7 @@ import flowsom_rs
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+plt.style.use("default")
 import numpy as np
 import optuna
 import pandas as pd
@@ -49,43 +31,26 @@ from scipy.stats import kurtosis, skew
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import silhouette_score
 
-# ── CLI arguments ──────────────────────────────────────────────────────────────
-_parser = argparse.ArgumentParser(description="FlowSOM Bayesian optimisation (AWS version)")
-_parser.add_argument(
-    "--data-dir", default=None,
-    help="Path to dataset folder containing *.csv files.",
-)
-_parser.add_argument(
-    "--trial", type=int, default=None,
-    help="Optuna trial number to use for final clustering (default: automatic best).",
-)
-_parser.add_argument(
-    "--skip-meta", action="store_true",
-    help="Do NOT append results to meta_dataset.csv.",
-)
-_parser.add_argument(
-    "--save-meta", action="store_true",
-    help="Append results to meta_dataset.csv.",
-)
-_args = _parser.parse_args()
-
 # ── Config ─────────────────────────────────────────────────────────────────────
-DATA_DIR = _args.data_dir if _args.data_dir else os.path.join(
-    os.path.dirname(__file__), "..", "ddPCR_data/MIP_100/220901_MIP100_PS_trt42_ta395_20220901_141940_944"
+CSV_FILE = os.path.join(
+    os.path.dirname(__file__), "..",
+    "ddPCR_data/MIP_100/220929_MIP100_395_3963_20220929_174427_697_sub/"
+    "220929_MIP100_395_3963_20220929_174427_697_H01_Amplitude.csv"
 )
 N_CLUST_RANGE = (2, 4)   # n_clusters is optimised by Optuna
 SEED          = 42       # reproducibility
-N_TRIALS      = 40       # Optuna trials
-EVAL_PTS      = 50_000   # subsample size for silhouette
-N_JOBS        = -1       # parallel jobs for silhouette_score (set to 1 if you get memory issues)
+N_TRIALS      = 40       # Optuna trials (≈2-5 min on a laptop)
+EVAL_PTS      = 50_000   # subsample size for silhouette (keeps it fast)
+N_JOBS        = -1       # parallel jobs (set to 1 if you get memory issues)
 
-# Search space
+# Search space – feel free to widen
 XDIM_RANGE = (6, 16)     # even integers only
 YDIM_RANGE = (6, 16)
 RLEN_RANGE = (5, 100)
 
-# All outputs go inside the data folder being processed
-OUT_DIR    = os.path.join(DATA_DIR, "output")
+# All outputs go inside a subfolder named after the CSV file
+_csv_stem  = os.path.splitext(os.path.basename(CSV_FILE))[0]
+OUT_DIR    = os.path.join(os.path.dirname(CSV_FILE), "output", _csv_stem)
 TRIALS_DIR = os.path.join(OUT_DIR, "trials")
 os.makedirs(TRIALS_DIR, exist_ok=True)
 
@@ -95,27 +60,26 @@ os.makedirs(META_DIR, exist_ok=True)
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-# ── 1. Load data once ──────────────────────────────────────────────────────────
-csv_files = sorted(glob.glob(os.path.join(DATA_DIR, "*.csv")))
-print(f"Found {len(csv_files)} CSV files in '{os.path.basename(DATA_DIR)}'.")
+# ── 1. Load single CSV ─────────────────────────────────────────────────────────
+if not os.path.isfile(CSV_FILE):
+    raise FileNotFoundError(f"CSV not found: {CSV_FILE}")
 
-adatas = []
-for f in csv_files:
-    parts = os.path.basename(f).split("_")
-    well  = parts[-2]
-    df    = pd.read_csv(f, skiprows=3)[["Ch1Amplitude", "Ch2Amplitude"]].dropna()
-    adata = ad.AnnData(df.values.astype(np.float32))
-    adata.var_names  = ["Ch1Amplitude", "Ch2Amplitude"]
-    adata.obs_names  = [f"{well}_{i}" for i in range(len(df))]
-    adata.obs["well"] = well
-    adatas.append(adata)
+parts = os.path.basename(CSV_FILE).split("_")
+well  = parts[-2]
 
-combined = ad.concat(adatas, merge="same")
+df       = pd.read_csv(CSV_FILE, skiprows=3)[["Ch1Amplitude", "Ch2Amplitude"]].dropna()
+adata    = ad.AnnData(df.values.astype(np.float32))
+adata.var_names = ["Ch1Amplitude", "Ch2Amplitude"]
+adata.obs_names = [f"{well}_{i}" for i in range(len(df))]
+adata.obs["well"] = well
+
+combined = adata
 data     = combined.X.astype(np.float64)
-print(f"Combined: {combined.n_obs:,} droplets across {len(csv_files)} wells.\n")
+print(f"Loaded {combined.n_obs:,} droplets from '{os.path.basename(CSV_FILE)}' (well={well}).\n")
 
-rng       = np.random.default_rng(SEED)
-eval_idx  = rng.choice(len(data), min(EVAL_PTS, len(data)), replace=False)
+# Pre-draw fixed subsample indices (shared across all trials for fair comparison)
+rng      = np.random.default_rng(SEED)
+eval_idx = rng.choice(len(data), min(EVAL_PTS, len(data)), replace=False)
 eval_data = data[eval_idx]
 
 PLOT_PTS  = 50_000
@@ -144,14 +108,16 @@ def _run_flowsom(xdim: int, ydim: int, rlen: int, n_clusters: int, seed: int = S
 
 def _save_trial_png(trial_number: int, xdim: int, ydim: int, rlen: int, n_clusters: int,
                     node_meta: np.ndarray, bmu_idx: np.ndarray, score: float) -> None:
+    """Save a scatter plot for one Optuna trial."""
     X_p  = plot_data
     mc_p = (node_meta[bmu_idx] + 1)[plot_idx]
 
-    fig, ax = plt.subplots(figsize=(5, 4))
+    fig, ax = plt.subplots(figsize=(5, 4), facecolor="white")
+    ax.set_facecolor("white")
     for mc in sorted(np.unique(mc_p)):
         mask = mc_p == mc
-        ax.scatter(X_p[mask, 1], X_p[mask, 0], s=0.4, alpha=0.3,
-                   label=f"C{mc}", rasterized=True)
+        ax.scatter(X_p[mask, 1], X_p[mask, 0], s=2, alpha=0.5,
+                   label=f"C{mc}")
     ax.set_xlabel("Ch2Amplitude")
     ax.set_ylabel("Ch1Amplitude")
     ax.legend(markerscale=6, title="MC", fontsize=7)
@@ -165,7 +131,7 @@ def _save_trial_png(trial_number: int, xdim: int, ydim: int, rlen: int, n_cluste
         f"trial_sil{score:+.4f}_t{trial_number:03d}"
         f"_xdim{xdim}_ydim{ydim}_rlen{rlen}_nc{n_clusters}.png"
     )
-    fig.savefig(os.path.join(TRIALS_DIR, fname), dpi=100)
+    fig.savefig(os.path.join(TRIALS_DIR, fname), dpi=100, facecolor="white")
     plt.close(fig)
 
 
@@ -178,6 +144,7 @@ def objective(trial: optuna.Trial) -> float:
     _, node_meta, bmu_idx = _run_flowsom(xdim, ydim, rlen, n_clusters)
     labels_eval = node_meta[bmu_idx][eval_idx]
 
+    # Guard: silhouette undefined if only 1 unique label appears in subsample
     if len(np.unique(labels_eval)) < 2:
         _save_trial_png(trial.number, xdim, ydim, rlen, n_clusters, node_meta, bmu_idx, score=-1.0)
         return -1.0
@@ -210,32 +177,36 @@ trials_df = study.trials_dataframe()[["number", "value", "params_xdim", "params_
 trials_df = trials_df.rename(columns={"value": "silhouette"}).sort_values("silhouette", ascending=False)
 print(trials_df.head(5).to_string(index=False))
 
-# ── 4b. Non-interactive parameter selection ────────────────────────────────────
-skip_meta = not _args.save_meta  # default: skip unless --save-meta is given
+# ── 4b. Manual override ────────────────────────────────────────────────────────
+print(f"\nReview the PNGs in: {TRIALS_DIR}")
+print("Press Enter to accept the automatic best, type a trial number to use instead, or 'skip' to skip saving to meta-dataset.")
+_choice = input("Manual trial number / 'skip' (or Enter to accept best): ").strip()
 
-if _args.trial is not None:
+skip_meta = False
+if _choice == "":
+    best       = auto_best
+    best_score = auto_score
+    print("Using automatic best.")
+elif _choice.lower() == "skip":
+    best       = auto_best
+    best_score = auto_score
+    skip_meta  = True
+    print("Skipping meta-dataset entry.")
+else:
     try:
-        _t         = study.trials[_args.trial]
-        best       = _t.params
-        best_score = _t.value if _t.value is not None else float("nan")
+        _trial_num = int(_choice)
+        _trial     = study.trials[_trial_num]
+        best       = _trial.params
+        best_score = _trial.value if _trial.value is not None else float("nan")
         print(
-            f"\nCLI: using trial {_args.trial}: "
+            f"Using trial {_trial_num}: "
             f"xdim={best['xdim']}  ydim={best['ydim']}  rlen={best['rlen']}  "
             f"n_clusters={best['n_clusters']}  sil={best_score:.4f}"
         )
-    except IndexError:
-        print(f"\nTrial {_args.trial} not found. Falling back to automatic best.")
+    except (ValueError, IndexError) as e:
+        print(f"Invalid input ({e}). Falling back to automatic best.")
         best       = auto_best
         best_score = auto_score
-else:
-    best       = auto_best
-    best_score = auto_score
-    print("\nCLI: using automatic best.")
-
-if skip_meta:
-    print("Meta-dataset entry will be SKIPPED (pass --save-meta to enable).")
-else:
-    print("Meta-dataset entry will be SAVED.")
 
 # ── 5. Final clustering with best params ───────────────────────────────────────
 XDIM, YDIM, RLEN, N_CLUSTERS = best["xdim"], best["ydim"], best["rlen"], best["n_clusters"]
@@ -245,7 +216,7 @@ _, node_meta, bmu_idx = _run_flowsom(XDIM, YDIM, RLEN, N_CLUSTERS)
 combined.obs["cluster"]     = bmu_idx + 1
 combined.obs["metacluster"] = node_meta[bmu_idx] + 1
 
-print("\nDroplets per metacluster (all wells):")
+print("\nDroplets per metacluster:")
 print(combined.obs["metacluster"].value_counts().sort_index())
 
 # ── 6. Scatter plot ────────────────────────────────────────────────────────────
@@ -255,52 +226,43 @@ plot_idx.sort()
 X        = combined.X[plot_idx]
 mc_plot  = combined.obs["metacluster"].values[plot_idx]
 
-fig, ax = plt.subplots(figsize=(6, 5))
+fig, ax = plt.subplots(figsize=(6, 5), facecolor="white")
+ax.set_facecolor("white")
 for mc in sorted(np.unique(mc_plot)):
     mask = mc_plot == mc
-    ax.scatter(X[mask, 1], X[mask, 0], s=0.5, alpha=0.3, label=f"Cluster {mc}", rasterized=True)
+    ax.scatter(X[mask, 1], X[mask, 0], s=1.5, alpha=0.4, label=f"Cluster {mc}")
 ax.set_xlabel("Ch2Amplitude")
 ax.set_ylabel("Ch1Amplitude")
 ax.legend(markerscale=8, title="Metacluster")
-ax.set_title(f"FlowSOM (optimised) – {len(csv_files)} wells, {combined.n_obs:,} droplets")
+ax.set_title(f"FlowSOM (optimised) – {os.path.basename(CSV_FILE)}  {combined.n_obs:,} droplets")
 param_text = (
     f"xdim={XDIM}  ydim={YDIM}  rlen={RLEN}  nc={N_CLUSTERS}"
     f"  sil={study.best_value:.3f}  trials={N_TRIALS}"
 )
 ax.text(0.01, 0.01, param_text, transform=ax.transAxes, fontsize=7,
         verticalalignment="bottom", color="gray", family="monospace")
-plt.tight_layout()
+fig.tight_layout()
 
 tag     = f"_opt_xdim{XDIM}_ydim{YDIM}_rlen{RLEN}_nc{N_CLUSTERS}"
 out_png = os.path.join(OUT_DIR, f"ddPCR_clusters{tag}.png")
-plt.savefig(out_png, dpi=150)
+fig.savefig(out_png, dpi=150, facecolor="white", bbox_inches="tight")
 print(f"\nSaved scatter plot → {out_png}")
 
-# ── 7. Per-well counts table ───────────────────────────────────────────────────
-counts = (
-    combined.obs
-    .groupby(["well", "metacluster"], observed=True)
-    .size()
-    .unstack(fill_value=0)
-    .sort_index()
-)
-counts.columns = [f"cluster_{c}" for c in counts.columns]
-counts["total"] = counts.sum(axis=1)
-for col in [c for c in counts.columns if c.startswith("cluster_")]:
-    counts[col.replace("cluster_", "pct_")] = (counts[col] / counts["total"] * 100).round(2)
+# ── 7. Per-droplet counts table ────────────────────────────────────────────────
+counts = combined.obs["metacluster"].value_counts().sort_index().rename("count").to_frame()
+counts["pct"] = (counts["count"] / counts["count"].sum() * 100).round(2)
 
 out_csv = os.path.join(OUT_DIR, f"ddPCR_cluster_counts{tag}.csv")
 counts.to_csv(out_csv)
-print(f"Saved per-well counts  → {out_csv}")
-print("\nPer-well summary (first 10 wells):")
-print(counts.head(10).to_string())
+print(f"Saved cluster counts  → {out_csv}")
+print(counts.to_string())
 
 # ── 8. Append to meta-dataset (for supervised predictor training) ───────────────
-def extract_features(X: np.ndarray, n_wells: int, combined=None) -> dict:
+def extract_features(X: np.ndarray) -> dict:
     """Compute summary statistics from raw amplitude data for meta-learning."""
     feat: dict = {}
     feat["n_droplets"] = len(X)
-    feat["n_wells"]    = n_wells
+    feat["n_wells"]    = 1
     for i, ch in enumerate(["ch1", "ch2"]):
         vals = X[:, i]
         feat[f"{ch}_mean"]   = float(np.mean(vals))
@@ -319,27 +281,18 @@ def extract_features(X: np.ndarray, n_wells: int, combined=None) -> dict:
         mu, sigma = feat[f"{ch}_mean"], feat[f"{ch}_std"]
         feat[f"{ch}_outlier_frac"] = float(np.mean((vals < mu - 3 * sigma) | (vals > mu + 3 * sigma)))
     feat["ch1_ch2_corr"] = float(np.corrcoef(X[:, 0], X[:, 1])[0, 1])
-    if combined is not None:
-        for i, ch in enumerate(["ch1", "ch2"]):
-            well_means = (
-                pd.DataFrame({"well": combined.obs["well"].values, "val": combined.X[:, i]})
-                .groupby("well")["val"].mean()
-            )
-            feat[f"well_cv_{ch}"] = float(well_means.std() / (well_means.mean() + 1e-9))
-        well_counts = pd.Series(combined.obs["well"].values).value_counts()
-        feat["well_cv_total"] = float(well_counts.std() / (well_counts.mean() + 1e-9))
     return feat
 
-features = extract_features(data, n_wells=len(csv_files), combined=combined)
-features["dataset"]         = os.path.basename(DATA_DIR)
-features["best_n_clusters"] = N_CLUSTERS
-features["best_xdim"]       = XDIM
-features["best_ydim"]       = YDIM
-features["best_rlen"]       = RLEN
-features["best_silhouette"] = round(best_score, 6)
+features = extract_features(data)
+features["dataset"]          = os.path.splitext(os.path.basename(CSV_FILE))[0]
+features["best_n_clusters"]  = N_CLUSTERS
+features["best_xdim"]        = XDIM
+features["best_ydim"]        = YDIM
+features["best_rlen"]        = RLEN
+features["best_silhouette"]  = round(best_score, 6)
 
 if skip_meta:
-    print("\nMeta-dataset entry skipped (pass --save-meta to enable).")
+    print("\nMeta-dataset entry skipped (user requested 'skip').")
 else:
     meta_path = os.path.join(META_DIR, "meta_dataset.csv")
     meta_row  = pd.DataFrame([features])
