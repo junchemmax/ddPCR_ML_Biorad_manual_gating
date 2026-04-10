@@ -18,29 +18,33 @@ ddPCR produces two-channel amplitude readings (Ch1, Ch2) per droplet per well. T
 
 ```
 ddPCR_ML/
-├── ddPCR_data/                         # raw per-well Amplitude CSV files (git-ignored)
-│   ├── 221227_MIP113AO_TA421-8_pl01/
-│   ├── 230418_MIP122_TRT01_TA421-8/
-│   └── ...
+├── ddPCR_data/                              # raw per-well Amplitude CSV files (git-ignored)
+│   └── MIP_100/
+│       ├── 220901_MIP100_PS_trt42_.../      # one subfolder per plate run
+│       └── ...
 └── flowsom/
-    ├── run_ddpcr_flowsom.py            # FlowSOM clustering (Python flowsom package)
-    ├── run_ddpcr_flowsom_flowsom_rs.py # FlowSOM clustering (Rust backend, faster)
-    ├── optimize_flowsom_params.py      # Bayesian hyperparameter search (Optuna)
-    ├── train_param_predictor.py        # Train supervised predictor on accumulated data
-    └── predict_params.py              # Predict best params for a new plate instantly
+    ├── run_ddpcr_flowsom.py                 # FlowSOM clustering (Python flowsom package)
+    ├── run_ddpcr_flowsom_flowsom_rs.py      # FlowSOM clustering (Rust backend, faster)
+    ├── optimize_flowsom_rs_params.py        # Bayesian hyperparameter search – local/interactive
+    ├── optimize_flowsom_rs_params_aws.py    # Bayesian hyperparameter search – AWS/EC2, non-interactive
+    ├── train_param_predictor.py             # Train supervised predictor on accumulated data
+    └── predict_params.py                    # Predict best params for a new plate instantly
 ```
 
 Generated files (not committed):
 
 ```
-flowsom/
-├── meta_dataset.csv                   # one row per optimised plate (grows over time)
-├── param_predictor.pkl                # trained Random Forest predictor
-├── param_predictor_report.txt         # CV scores and feature importances
-├── ddPCR_clusters_*.png               # scatter plots
-├── ddPCR_cluster_counts_*.csv         # per-well droplet counts
-├── optuna_param_importances.html      # interactive Optuna charts (optional)
-└── optuna_optimization_history.html
+ddPCR_data/<plate_folder>/output/           # per-plate outputs
+    ├── trials/                              # one PNG per Optuna trial (sortable by silhouette)
+    ├── ddPCR_clusters_opt_*.png             # final scatter plot
+    ├── ddPCR_cluster_counts_opt_*.csv       # per-well droplet counts
+    ├── optuna_param_importances.html        # interactive Optuna charts (optional)
+    └── optuna_optimization_history.html
+
+flowsom/output/                             # cross-plate accumulated files
+    ├── meta_dataset.csv                    # one row per optimised plate (grows over time)
+    ├── param_predictor.pkl                 # trained Random Forest predictor
+    └── param_predictor_report.txt          # CV scores and feature importances
 ```
 
 ---
@@ -104,21 +108,51 @@ Key parameters:
 
 ### 2. Automatic hyperparameter optimisation (Bayesian)
 
+#### Local / interactive
+
 ```bash
-python flowsom/optimize_flowsom_params.py
+python flowsom/optimize_flowsom_rs_params.py
 ```
 
 - Runs **40 Optuna trials** (TPE sampler) to maximise the **Silhouette Score** of the metaclusters.
-- Searches: `XDIM` ∈ {6, 8, …, 16}, `YDIM` ∈ {6, 8, …, 16}, `RLEN` ∈ [5, 100].
-- Saves the best-parameter plot and counts CSV.
-- **Appends one row** to `meta_dataset.csv` (data statistics + best params) for later supervised learning.
+- Searches: `XDIM` ∈ {6, 8, …, 16}, `YDIM` ∈ {6, 8, …, 16}, `RLEN` ∈ [5, 100], `N_CLUSTERS` ∈ [2, 4].
+- Saves one PNG per trial to `<plate_folder>/output/trials/` (filenames sorted by score).
+- After trials finish, prompts you to review PNGs and either accept the automatic best or choose a specific trial number.
+- Type a trial number to save to `meta_dataset.csv`, or press Enter / type `skip` to skip.
 
 Configure at the top of the script:
 
 ```python
-DATA_DIR   = "path/to/your/plate_folder"
-N_CLUSTERS = 4
-N_TRIALS   = 40   # increase for a more thorough search
+DATA_DIR      = "path/to/your/plate_folder"
+N_CLUST_RANGE = (2, 4)   # range for n_clusters Optuna parameter
+N_TRIALS      = 40       # increase for a more thorough search
+```
+
+#### AWS / EC2 — non-interactive
+
+```bash
+python flowsom/optimize_flowsom_rs_params_aws.py --data-dir /path/to/plate_folder --skip-meta
+```
+
+No interactive prompt. Use CLI flags to control behaviour:
+
+| Flag | Behaviour |
+|------|-----------|
+| *(no flags)* | Auto best, skip meta-dataset |
+| `--data-dir PATH` | Override the dataset folder |
+| `--trial N` | Use trial number N for final clustering |
+| `--skip-meta` | Do **not** save to `meta_dataset.csv` (default) |
+| `--save-meta` | Save to `meta_dataset.csv` |
+
+**Two-phase EC2 workflow:**
+
+```bash
+# Phase 1 – run optimisation, skip meta
+python optimize_flowsom_rs_params_aws.py --data-dir ~/data/plate1 --skip-meta
+# → download trials/ PNGs locally, pick best trial number
+
+# Phase 2 – finalise with chosen trial, save meta
+python optimize_flowsom_rs_params_aws.py --data-dir ~/data/plate1 --trial 7 --save-meta
 ```
 
 ---
@@ -164,13 +198,13 @@ Use these values directly in the clustering scripts. If confidence is low (few t
 Each new plate
       │
       ▼
-optimize_flowsom_params.py ──► meta_dataset.csv (grows)
-                                      │
-                         (≥5 plates)  ▼
+optimize_flowsom_rs_params.py ──► meta_dataset.csv (grows)
+  (or _aws.py for EC2)                   │
+                         (≥5 plates)     ▼
                          train_param_predictor.py ──► param_predictor.pkl
-                                      │
-                         Next plate   ▼
-                         predict_params.py  ──► XDIM / YDIM / RLEN (instant)
+                                         │
+                         Next plate      ▼
+                         predict_params.py  ──► XDIM / YDIM / RLEN / N_CLUSTERS (instant)
 ```
 
 The predictor improves as more plates are added. Re-run `train_param_predictor.py` periodically to refresh the model.
@@ -184,8 +218,9 @@ The predictor improves as more plates are added. Re-run `train_param_predictor.p
 | Group | Features |
 |-------|---------|
 | Size | `n_droplets`, `n_wells` |
-| Ch1 / Ch2 amplitude | mean, std, p5, p25, median, p75, p95, IQR, range, CV, skewness, kurtosis |
+| Ch1 / Ch2 amplitude | mean, std, p5, p25, median, p75, p95, skewness, kurtosis, bimodality coefficient, log-space std & skew, outlier fraction |
 | Cross-channel | Pearson correlation (Ch1 vs Ch2) |
+| Per-well variability | coefficient of variation of well means (Ch1, Ch2), CV of droplet counts |
 
 ---
 
