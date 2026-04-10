@@ -77,6 +77,7 @@ N_CLUST_RANGE = (2, 4)   # n_clusters is optimised by Optuna
 SEED          = 42       # reproducibility
 N_TRIALS      = 40       # Optuna trials
 EVAL_PTS      = 20_000   # subsample size for silhouette
+N_JOBS        = 12       # parallel jobs for silhouette_score (set to 1 if you get memory issues)
 
 # Search space
 XDIM_RANGE = (6, 16)     # even integers only
@@ -190,7 +191,7 @@ def objective(trial: optuna.Trial) -> float:
 print(f"Running Optuna study ({N_TRIALS} trials) …")
 sampler = optuna.samplers.TPESampler(seed=SEED)
 study   = optuna.create_study(direction="maximize", sampler=sampler)
-study.optimize(objective, n_trials=N_TRIALS, show_progress_bar=True)
+study.optimize(objective, n_trials=N_TRIALS, show_progress_bar=True, n_jobs=N_JOBS)
 
 print(f"Trial PNGs saved → {TRIALS_DIR}  (sort by filename to rank by silhouette score)")
 

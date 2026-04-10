@@ -38,7 +38,8 @@ DATA_DIR   = os.path.join(os.path.dirname(__file__), "..", "ddPCR_data/MIP_100/2
 N_CLUST_RANGE = (2, 4)  # n_clusters is now optimised by Optuna
 SEED          = 42      # reproducibility
 N_TRIALS   = 40         # Optuna trials (≈2-5 min on a laptop)
-EVAL_PTS   = 20_000      # subsample size for silhouette (keeps it fast)
+EVAL_PTS   = 50_000      # subsample size for silhouette (keeps it fast)
+N_JOBS = 12  # parallel jobs for silhouette_score (set to 1 if you get memory issues)
 
 # Search space – feel free to widen
 XDIM_RANGE = (6, 16)    # even integers only
@@ -162,7 +163,7 @@ def objective(trial: optuna.Trial) -> float:
 print(f"Running Optuna study ({N_TRIALS} trials) …")
 sampler = optuna.samplers.TPESampler(seed=SEED)
 study   = optuna.create_study(direction="maximize", sampler=sampler)
-study.optimize(objective, n_trials=N_TRIALS, show_progress_bar=True)
+study.optimize(objective, n_trials=N_TRIALS, show_progress_bar=True, n_jobs=N_JOBS)
 
 print(f"Trial PNGs saved → {TRIALS_DIR}  (sort by filename to rank by silhouette score)")
 
