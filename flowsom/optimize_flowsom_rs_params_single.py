@@ -319,7 +319,7 @@ def process_csv(csv_file: str) -> None:
     if skip_meta:
         print("\nMeta-dataset entry skipped (user requested 'skip').")
     else:
-        meta_fname = "meta_dataset_1_cluster.csv" if is_one_cluster else "meta_dataset.csv"
+        meta_fname = "meta_dataset_1cluster.csv" if is_one_cluster else "meta_dataset.csv"
         meta_path  = os.path.join(META_DIR, meta_fname)
         meta_row   = pd.DataFrame([features])
         if os.path.exists(meta_path):
