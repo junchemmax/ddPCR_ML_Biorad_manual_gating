@@ -191,10 +191,11 @@ def process_csv(csv_file: str) -> None:
 
     # ── 4b. Manual override ────────────────────────────────────────────────────
     print(f"\nReview the PNGs in: {TRIALS_DIR}")
-    print("Press Enter to accept the automatic best, type a trial number to use instead, or 'skip' to skip saving to meta-dataset.")
-    _choice = input("Manual trial number / 'skip' (or Enter to accept best): ").strip()
+    print("Press Enter to accept the automatic best, type a trial number to use instead, '1cluster' to mark as single-cluster, or 'skip' to skip saving to meta-dataset.")
+    _choice = input("Manual trial number / '1cluster' / 'skip' (or Enter to accept best): ").strip()
 
-    skip_meta = False
+    skip_meta      = False
+    is_one_cluster = False
     if _choice == "":
         best       = auto_best
         best_score = auto_score
@@ -204,6 +205,11 @@ def process_csv(csv_file: str) -> None:
         best_score = auto_score
         skip_meta  = True
         print("Skipping meta-dataset entry.")
+    elif _choice.lower() == "1cluster":
+        best           = {**auto_best, "n_clusters": 1}
+        best_score     = float("nan")
+        is_one_cluster = True
+        print("Marking as single-cluster (all droplets → metacluster 1).")
     else:
         try:
             _trial_num = int(_choice)
@@ -224,9 +230,13 @@ def process_csv(csv_file: str) -> None:
     XDIM, YDIM, RLEN, N_CLUSTERS = best["xdim"], best["ydim"], best["rlen"], best["n_clusters"]
     print(f"\nRunning final clustering: xdim={XDIM}, ydim={YDIM}, rlen={RLEN}, n_clusters={N_CLUSTERS} …")
 
-    _, node_meta, bmu_idx = _run_flowsom(XDIM, YDIM, RLEN, N_CLUSTERS)
-    combined.obs["cluster"]     = bmu_idx + 1
-    combined.obs["metacluster"] = node_meta[bmu_idx] + 1
+    if is_one_cluster:
+        combined.obs["cluster"]     = 1
+        combined.obs["metacluster"] = 1
+    else:
+        _, node_meta, bmu_idx = _run_flowsom(XDIM, YDIM, RLEN, N_CLUSTERS)
+        combined.obs["cluster"]     = bmu_idx + 1
+        combined.obs["metacluster"] = node_meta[bmu_idx] + 1
 
     print("\nDroplets per metacluster:")
     print(combined.obs["metacluster"].value_counts().sort_index())
@@ -249,9 +259,10 @@ def process_csv(csv_file: str) -> None:
     ax.set_ylabel("Ch1Amplitude")
     ax.legend(markerscale=8, title="Metacluster")
     ax.set_title(f"FlowSOM (optimised) – {os.path.basename(csv_file)}  {combined.n_obs:,} droplets")
+    _sil_str   = "nan" if np.isnan(best_score) else f"{best_score:.3f}"
     param_text = (
         f"xdim={XDIM}  ydim={YDIM}  rlen={RLEN}  nc={N_CLUSTERS}"
-        f"  sil={study.best_value:.3f}  trials={N_TRIALS}"
+        f"  sil={_sil_str}  trials={N_TRIALS}"
     )
     ax.text(0.01, 0.01, param_text, transform=ax.transAxes, fontsize=7,
             verticalalignment="bottom", color="gray", family="monospace")
@@ -308,8 +319,9 @@ def process_csv(csv_file: str) -> None:
     if skip_meta:
         print("\nMeta-dataset entry skipped (user requested 'skip').")
     else:
-        meta_path = os.path.join(META_DIR, "meta_dataset.csv")
-        meta_row  = pd.DataFrame([features])
+        meta_fname = "meta_dataset_1_cluster.csv" if is_one_cluster else "meta_dataset.csv"
+        meta_path  = os.path.join(META_DIR, meta_fname)
+        meta_row   = pd.DataFrame([features])
         if os.path.exists(meta_path):
             existing = pd.read_csv(meta_path)
             existing = existing[existing["dataset"] != features["dataset"]]
