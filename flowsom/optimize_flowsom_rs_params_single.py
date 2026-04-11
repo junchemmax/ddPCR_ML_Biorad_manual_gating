@@ -287,8 +287,18 @@ def process_csv(csv_file: str) -> None:
     _mc_all = np.asarray(combined.obs["metacluster"].values, dtype=int)
     for mc in sorted(np.unique(_mc_all)):
         mask = _mc_all == mc
-        counts.loc[mc, "ch1_centroid"] = round(float(np.mean(_X_all[mask, 0])), 2)
-        counts.loc[mc, "ch2_centroid"] = round(float(np.mean(_X_all[mask, 1])), 2)
+        for i, ch in enumerate(["ch1", "ch2"]):
+            vals = _X_all[mask, i]
+            mean_v = float(np.mean(vals))
+            std_v  = float(np.std(vals))
+            counts.loc[mc, f"{ch}_centroid"] = round(mean_v, 2)
+            counts.loc[mc, f"{ch}_std"]      = round(std_v, 2)
+            counts.loc[mc, f"{ch}_cv_pct"]   = round(std_v / mean_v * 100, 2) if mean_v != 0 else float("nan")
+            counts.loc[mc, f"{ch}_min"]      = round(float(np.min(vals)), 2)
+            counts.loc[mc, f"{ch}_p25"]      = round(float(np.percentile(vals, 25)), 2)
+            counts.loc[mc, f"{ch}_median"]   = round(float(np.median(vals)), 2)
+            counts.loc[mc, f"{ch}_p75"]      = round(float(np.percentile(vals, 75)), 2)
+            counts.loc[mc, f"{ch}_max"]      = round(float(np.max(vals)), 2)
 
     out_csv = os.path.join(out_dir, f"ddPCR_cluster_counts{tag}.csv")
     counts.to_csv(out_csv)
