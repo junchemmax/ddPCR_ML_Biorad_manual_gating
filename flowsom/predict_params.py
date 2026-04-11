@@ -21,31 +21,42 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 import joblib
 import numpy as np
 import pandas as pd
-from scipy.stats import kurtosis, skew
+from scipy.signal import find_peaks
+from scipy.stats import gaussian_kde, kurtosis, skew
 
 HERE      = os.path.dirname(os.path.abspath(__file__))
 MODEL_PKL = os.path.join(HERE, "param_predictor.pkl")
 
 
-# ── Feature extraction (must match optimize_flowsom_params.py) ─────────────────
-def extract_features(data: np.ndarray, n_wells: int) -> dict:
+# ── Feature extraction (must match optimize_flowsom_rs_params_single.py) ─────────
+def _kde_peak_count(vals: np.ndarray) -> int:
+    kde = gaussian_kde(vals, bw_method=0.15)
+    xs = np.linspace(vals.min(), vals.max(), 500)
+    density = kde(xs)
+    peaks, _ = find_peaks(density, prominence=density.max() * 0.05)
+    return len(peaks)
+
+
+def extract_features(data: np.ndarray) -> dict:
     feat: dict = {}
     feat["n_droplets"] = len(data)
-    feat["n_wells"]    = n_wells
     for i, ch in enumerate(["ch1", "ch2"]):
         vals = data[:, i]
-        feat[f"{ch}_mean"]   = float(np.mean(vals))
-        feat[f"{ch}_std"]    = float(np.std(vals))
-        feat[f"{ch}_p5"]     = float(np.percentile(vals, 5))
-        feat[f"{ch}_p25"]    = float(np.percentile(vals, 25))
-        feat[f"{ch}_median"] = float(np.median(vals))
-        feat[f"{ch}_p75"]    = float(np.percentile(vals, 75))
-        feat[f"{ch}_p95"]    = float(np.percentile(vals, 95))
-        feat[f"{ch}_iqr"]    = feat[f"{ch}_p75"] - feat[f"{ch}_p25"]
-        feat[f"{ch}_range"]  = float(vals.max() - vals.min())
-        feat[f"{ch}_cv"]     = feat[f"{ch}_std"] / (feat[f"{ch}_mean"] + 1e-9)
+        mu    = float(np.mean(vals))
+        sigma = float(np.std(vals))
+        p25   = float(np.percentile(vals, 25))
+        p75   = float(np.percentile(vals, 75))
+        feat[f"{ch}_std"]    = sigma
+        feat[f"{ch}_iqr"]    = p75 - p25
+        feat[f"{ch}_cv"]     = sigma / (mu + 1e-9)
         feat[f"{ch}_skew"]   = float(skew(vals))
         feat[f"{ch}_kurt"]   = float(kurtosis(vals))
+        feat[f"{ch}_bimodality"] = (feat[f"{ch}_skew"] ** 2 + 1) / (feat[f"{ch}_kurt"] + 3 + 1e-9)
+        log_vals = np.log1p(np.clip(vals, 0, None))
+        feat[f"{ch}_log_std"]  = float(np.std(log_vals))
+        feat[f"{ch}_log_skew"] = float(skew(log_vals))
+        feat[f"{ch}_outlier_frac"] = float(np.mean((vals < mu - 3 * sigma) | (vals > mu + 3 * sigma)))
+        feat[f"{ch}_kde_peaks"] = _kde_peak_count(vals)
     feat["ch1_ch2_corr"] = float(np.corrcoef(data[:, 0], data[:, 1])[0, 1])
     return feat
 
@@ -84,21 +95,23 @@ pipeline     = bundle["pipeline"]
 feature_cols = bundle["feature_cols"]
 
 # ── Predict ────────────────────────────────────────────────────────────────────
-features = extract_features(data, n_wells=len(csv_files))
+features = extract_features(data)
 X_new    = np.array([[features[c] for c in feature_cols]])
 
 pred = pipeline.predict(X_new)[0]
 
-# Round to nearest even integer for XDIM / YDIM; nearest int for RLEN
+# TARGET_COLS order: best_n_clusters, best_xdim, best_ydim, best_rlen
 def round_even(v: float) -> int:
     i = int(round(v))
     return i if i % 2 == 0 else i + 1
 
-xdim_pred = round_even(pred[0])
-ydim_pred = round_even(pred[1])
-rlen_pred = max(5, int(round(pred[2])))
+nclust_pred = max(1, int(round(pred[0])))
+xdim_pred   = round_even(pred[1])
+ydim_pred   = round_even(pred[2])
+rlen_pred   = max(5, int(round(pred[3])))
 
 print("\n── Predicted FlowSOM parameters ──────────────────")
+print(f"  N_CLUSTERS = {nclust_pred}")
 print(f"  XDIM = {xdim_pred}")
 print(f"  YDIM = {ydim_pred}")
 print(f"  RLEN = {rlen_pred}")

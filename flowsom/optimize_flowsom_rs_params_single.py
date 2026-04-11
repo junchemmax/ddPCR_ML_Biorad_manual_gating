@@ -29,8 +29,9 @@ plt.style.use("default")
 import numpy as np
 import optuna
 import pandas as pd
+from scipy.signal import find_peaks
 from scipy.spatial.distance import pdist, squareform
-from scipy.stats import kurtosis, skew
+from scipy.stats import gaussian_kde, kurtosis, skew
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import silhouette_score
 
@@ -257,16 +258,46 @@ def process_csv(csv_file: str) -> None:
         mask = _mc_all == mc
         for i, ch in enumerate(["ch1", "ch2"]):
             vals = _X_all[mask, i]
-            mean_v = float(np.mean(vals))
-            std_v  = float(np.std(vals))
-            counts.loc[mc, f"{ch}_centroid"] = round(mean_v, 2)
-            counts.loc[mc, f"{ch}_std"]      = round(std_v, 2)
-            counts.loc[mc, f"{ch}_cv_pct"]   = round(std_v / mean_v * 100, 2) if mean_v != 0 else float("nan")
-            counts.loc[mc, f"{ch}_min"]      = round(float(np.min(vals)), 2)
-            counts.loc[mc, f"{ch}_p25"]      = round(float(np.percentile(vals, 25)), 2)
-            counts.loc[mc, f"{ch}_median"]   = round(float(np.median(vals)), 2)
-            counts.loc[mc, f"{ch}_p75"]      = round(float(np.percentile(vals, 75)), 2)
-            counts.loc[mc, f"{ch}_max"]      = round(float(np.max(vals)), 2)
+            counts.loc[mc, f"{ch}_centroid"] = round(float(np.mean(vals)), 2)
+
+    # ── 6b. Relative features (rank, z-score, pairwise distances) ─────────────
+    _mc_indices    = list(counts.index)
+    n_clust_actual = len(_mc_indices)
+    counts["n_clusters"] = n_clust_actual
+
+    centroids_ch1 = counts["ch1_centroid"].values.astype(float)
+    centroids_ch2 = counts["ch2_centroid"].values.astype(float)
+
+    # Ch2/Ch1 centroid ratio — channel balance; scale-invariant, Q-discriminating:
+    #   Q2 (Ch1+Ch2-) → low ratio   Q4 (Ch1-Ch2+) → high ratio
+    #   Q1 (Ch1+Ch2+) → moderate    Q3 (Ch1-Ch2-) → moderate (but lowest absolute values)
+    counts["ch2_ch1_ratio"] = (centroids_ch2 / (centroids_ch1 + 1e-9)).round(4)
+
+    # Range-normalised centroid position within this well [0=min cluster, 1=max cluster]
+    _ch1_range = centroids_ch1.max() - centroids_ch1.min()
+    _ch2_range = centroids_ch2.max() - centroids_ch2.min()
+    counts["ch1_pos_in_range"] = ((centroids_ch1 - centroids_ch1.min()) / (_ch1_range + 1e-9)).round(4)
+    counts["ch2_pos_in_range"] = ((centroids_ch2 - centroids_ch2.min()) / (_ch2_range + 1e-9)).round(4)
+
+    # Cluster-size-weighted z-score of each cluster's centroid within the well
+    _wt        = counts["count"].values.astype(float)
+    _ch1_wmean = np.average(centroids_ch1, weights=_wt)
+    _ch2_wmean = np.average(centroids_ch2, weights=_wt)
+    _ch1_wstd  = np.sqrt(np.average((centroids_ch1 - _ch1_wmean) ** 2, weights=_wt)) + 1e-9
+    _ch2_wstd  = np.sqrt(np.average((centroids_ch2 - _ch2_wmean) ** 2, weights=_wt)) + 1e-9
+    counts["ch1_centroid_zscore"] = ((centroids_ch1 - _ch1_wmean) / _ch1_wstd).round(4)
+    counts["ch2_centroid_zscore"] = ((centroids_ch2 - _ch2_wmean) / _ch2_wstd).round(4)
+
+    # Size rank (1 = largest cluster) — dominant cluster is almost always Q3
+    counts["size_rank"] = counts["count"].rank(ascending=False, method="min").astype(int)
+
+    # Sign of weighted z-score: together these nearly directly encode the quadrant
+    #   ch1_zscore_pos=0, ch2_zscore_pos=0 → Q3 (Ch1-Ch2-)  most common (empty droplets)
+    #   ch1_zscore_pos=1, ch2_zscore_pos=0 → Q2 (Ch1+Ch2-)
+    #   ch1_zscore_pos=0, ch2_zscore_pos=1 → Q4 (Ch1-Ch2+)
+    #   ch1_zscore_pos=1, ch2_zscore_pos=1 → Q1 (Ch1+Ch2+)
+    counts["ch1_zscore_pos"] = (counts["ch1_centroid_zscore"] > 0).astype(int)
+    counts["ch2_zscore_pos"] = (counts["ch2_centroid_zscore"] > 0).astype(int)
 
     # ── Manual quadrant assignment ─────────────────────────────────────────────
     # Quadrant convention: 1=Ch1+Ch2+, 2=Ch1+Ch2-, 3=Ch1-Ch2-, 4=Ch1-Ch2+
@@ -341,25 +372,32 @@ def process_csv(csv_file: str) -> None:
     # ── 9. Append to meta-dataset (for supervised predictor training) ──────────
     def extract_features(X: np.ndarray) -> dict:
         """Compute summary statistics from raw amplitude data for meta-learning."""
+        def _kde_peak_count(vals: np.ndarray) -> int:
+            kde = gaussian_kde(vals, bw_method=0.15)
+            xs = np.linspace(vals.min(), vals.max(), 500)
+            density = kde(xs)
+            peaks, _ = find_peaks(density, prominence=density.max() * 0.05)
+            return len(peaks)
+
         feat: dict = {}
         feat["n_droplets"] = len(X)
         for i, ch in enumerate(["ch1", "ch2"]):
             vals = X[:, i]
-            feat[f"{ch}_mean"]   = float(np.mean(vals))
-            feat[f"{ch}_std"]    = float(np.std(vals))
-            feat[f"{ch}_p5"]     = float(np.percentile(vals, 5))
-            feat[f"{ch}_p25"]    = float(np.percentile(vals, 25))
-            feat[f"{ch}_median"] = float(np.median(vals))
-            feat[f"{ch}_p75"]    = float(np.percentile(vals, 75))
-            feat[f"{ch}_p95"]    = float(np.percentile(vals, 95))
+            mu    = float(np.mean(vals))
+            sigma = float(np.std(vals))
+            p25   = float(np.percentile(vals, 25))
+            p75   = float(np.percentile(vals, 75))
+            feat[f"{ch}_std"]    = sigma
+            feat[f"{ch}_iqr"]    = p75 - p25
+            feat[f"{ch}_cv"]     = sigma / (mu + 1e-9)
             feat[f"{ch}_skew"]   = float(skew(vals))
             feat[f"{ch}_kurt"]   = float(kurtosis(vals))
             feat[f"{ch}_bimodality"] = (feat[f"{ch}_skew"] ** 2 + 1) / (feat[f"{ch}_kurt"] + 3 + 1e-9)
             log_vals = np.log1p(np.clip(vals, 0, None))
             feat[f"{ch}_log_std"]  = float(np.std(log_vals))
             feat[f"{ch}_log_skew"] = float(skew(log_vals))
-            mu, sigma = feat[f"{ch}_mean"], feat[f"{ch}_std"]
             feat[f"{ch}_outlier_frac"] = float(np.mean((vals < mu - 3 * sigma) | (vals > mu + 3 * sigma)))
+            feat[f"{ch}_kde_peaks"] = _kde_peak_count(vals)
         feat["ch1_ch2_corr"] = float(np.corrcoef(X[:, 0], X[:, 1])[0, 1])
         return feat
 

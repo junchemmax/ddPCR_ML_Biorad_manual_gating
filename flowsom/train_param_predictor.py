@@ -32,8 +32,8 @@ MODEL_OUT     = os.path.join(HERE, "param_predictor.pkl")
 REPORT_OUT    = os.path.join(HERE, "param_predictor_report.txt")
 MIN_SAMPLES   = 5   # warn if fewer rows (model will be unreliable)
 
-TARGET_COLS   = ["best_xdim", "best_ydim", "best_rlen"]
-DROP_COLS     = ["dataset", "n_clusters"] + TARGET_COLS + ["best_silhouette"]
+TARGET_COLS   = ["best_n_clusters", "best_xdim", "best_ydim", "best_rlen"]
+DROP_COLS     = ["dataset", "best_silhouette", "clear_clustering", "mut_found"] + TARGET_COLS
 
 # ── Load meta-dataset ──────────────────────────────────────────────────────────
 if not os.path.exists(META_CSV):
