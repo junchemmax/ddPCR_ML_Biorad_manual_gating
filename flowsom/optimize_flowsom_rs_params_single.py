@@ -40,11 +40,17 @@ _parser.add_argument(
     "folder",
     help="Path to folder containing *_Amplitude.csv files",
 )
+_parser.add_argument(
+    "--trials",
+    type=int,
+    default=40,
+    help="Number of Optuna trials (default: 40)",
+)
 _args = _parser.parse_args()
 CSV_FOLDER = os.path.normpath(_args.folder)
 N_CLUST_RANGE = (2, 4)   # n_clusters is optimised by Optuna
 SEED          = 42       # reproducibility
-N_TRIALS      = 40       # Optuna trials (≈2-5 min on a laptop)
+N_TRIALS      = _args.trials  # Optuna trials (≈2-5 min on a laptop; override with --trials)
 EVAL_PTS      = 50_000   # subsample size for silhouette (keeps it fast)
 N_JOBS        = -1       # parallel jobs (set to 1 if you get memory issues)
 
@@ -191,6 +197,7 @@ def process_csv(csv_file: str) -> None:
 
     # ── 4b. Manual override ────────────────────────────────────────────────────
     print(f"\nReview the PNGs in: {TRIALS_DIR}")
+    print(f"The automatic best is #{study.best_trial.number} with silhouette {auto_score:.4f}.")
     print("Press Enter to accept the automatic best, type a trial number to use instead, '1cluster' to mark as single-cluster, or 'skip' to skip saving to meta-dataset.")
     _choice = input("Manual trial number / '1cluster' / 'skip' (or Enter to accept best): ").strip()
 
@@ -276,6 +283,12 @@ def process_csv(csv_file: str) -> None:
     # ── 7. Per-droplet counts table ────────────────────────────────────────────
     counts = combined.obs["metacluster"].value_counts().sort_index().rename("count").to_frame()
     counts["pct"] = (counts["count"] / counts["count"].sum() * 100).round(2)
+    _X_all = np.asarray(combined.X, dtype=np.float64)
+    _mc_all = np.asarray(combined.obs["metacluster"].values, dtype=int)
+    for mc in sorted(np.unique(_mc_all)):
+        mask = _mc_all == mc
+        counts.loc[mc, "ch1_centroid"] = round(float(np.mean(_X_all[mask, 0])), 2)
+        counts.loc[mc, "ch2_centroid"] = round(float(np.mean(_X_all[mask, 1])), 2)
 
     out_csv = os.path.join(out_dir, f"ddPCR_cluster_counts{tag}.csv")
     counts.to_csv(out_csv)
@@ -287,7 +300,6 @@ def process_csv(csv_file: str) -> None:
         """Compute summary statistics from raw amplitude data for meta-learning."""
         feat: dict = {}
         feat["n_droplets"] = len(X)
-        feat["n_wells"]    = 1
         for i, ch in enumerate(["ch1", "ch2"]):
             vals = X[:, i]
             feat[f"{ch}_mean"]   = float(np.mean(vals))
@@ -319,17 +331,34 @@ def process_csv(csv_file: str) -> None:
     if skip_meta:
         print("\nMeta-dataset entry skipped (user requested 'skip').")
     else:
-        meta_fname = "meta_dataset_1cluster.csv" if is_one_cluster else "meta_dataset.csv"
-        meta_path  = os.path.join(META_DIR, meta_fname)
-        meta_row   = pd.DataFrame([features])
-        if os.path.exists(meta_path):
-            existing = pd.read_csv(meta_path)
-            existing = existing[existing["dataset"] != features["dataset"]]
-            meta_df  = pd.concat([existing, meta_row], ignore_index=True)
-        else:
-            meta_df = meta_row
-        meta_df.to_csv(meta_path, index=False)
-        print(f"\nAppended features + best params → {meta_path}  ({len(meta_df)} total rows)")
+        # ── Manual label inputs ────────────────────────────────────────────────
+        def _ask_bool(prompt: str) -> bool:
+            while True:
+                ans = input(f"{prompt} [y/n]: ").strip().lower()
+                if ans in ("y", "yes", "true", "1"):
+                    return True
+                if ans in ("n", "no", "false", "0"):
+                    return False
+                print("  Please enter y or n.")
+
+        print("\nManual labels for this well:")
+        features["normal_cluster_distribution"] = _ask_bool("  Normal cluster distribution?")
+        features["clear_clustering"]            = _ask_bool("  Clear clustering?")
+        features["mut_found"]                   = _ask_bool("  Mut found?")
+        meta_row = pd.DataFrame([features])
+
+        def _append_to_meta(fname: str) -> None:
+            path = os.path.join(META_DIR, fname)
+            if os.path.exists(path):
+                existing = pd.read_csv(path)
+                existing = existing[existing["dataset"] != features["dataset"]]
+                df = pd.concat([existing, meta_row], ignore_index=True)
+            else:
+                df = meta_row
+            df.to_csv(path, index=False)
+            print(f"\nAppended features + best params → {path}  ({len(df)} total rows)")
+
+        _append_to_meta("meta_dataset.csv")
         print("Run  train_param_predictor.py  once you have collected enough datasets.")
 
     # ── 9. Optuna visualisation (optional, requires plotly) ────────────────────
