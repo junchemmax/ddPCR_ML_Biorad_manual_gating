@@ -248,39 +248,7 @@ def process_csv(csv_file: str) -> None:
     print("\nDroplets per metacluster:")
     print(combined.obs["metacluster"].value_counts().sort_index())
 
-    # ── 6. Scatter plot ────────────────────────────────────────────────────────
-    max_pts   = 200_000
-    _plot_idx = np.random.default_rng(0).choice(combined.n_obs, min(max_pts, combined.n_obs), replace=False)
-    _plot_idx.sort()
-    X       = np.asarray(combined.X[_plot_idx], dtype=np.float64)
-    mc_plot = np.asarray(combined.obs["metacluster"].values[_plot_idx], dtype=int)
-
-    plt.close("all")          # discard figures left over from parallel workers
-    plt.style.use("default")  # restore clean rcParams after parallel corruption
-    fig, ax = plt.subplots(figsize=(6, 5), facecolor="white")
-    ax.set_facecolor("white")
-    for mc in sorted(np.unique(mc_plot)):
-        mask = mc_plot == mc
-        ax.scatter(X[mask, 1], X[mask, 0], s=5, alpha=0.6, label=f"Cluster {mc}")
-    ax.set_xlabel("Ch2Amplitude")
-    ax.set_ylabel("Ch1Amplitude")
-    ax.legend(markerscale=8, title="Metacluster")
-    ax.set_title(f"FlowSOM (optimised) – {os.path.basename(csv_file)}  {combined.n_obs:,} droplets")
-    _sil_str   = "nan" if np.isnan(best_score) else f"{best_score:.3f}"
-    param_text = (
-        f"xdim={XDIM}  ydim={YDIM}  rlen={RLEN}  nc={N_CLUSTERS}"
-        f"  sil={_sil_str}  trials={N_TRIALS}"
-    )
-    ax.text(0.01, 0.01, param_text, transform=ax.transAxes, fontsize=7,
-            verticalalignment="bottom", color="gray", family="monospace")
-    fig.tight_layout()
-
-    tag     = f"_opt_xdim{XDIM}_ydim{YDIM}_rlen{RLEN}_nc{N_CLUSTERS}"
-    out_png = os.path.join(out_dir, f"ddPCR_clusters{tag}.png")
-    fig.savefig(out_png, dpi=150, facecolor="white", bbox_inches="tight")
-    print(f"\nSaved scatter plot → {out_png}")
-
-    # ── 7. Per-droplet counts table ────────────────────────────────────────────
+    # ── 6. Per-droplet counts table + quadrant assignment ─────────────────────
     counts = combined.obs["metacluster"].value_counts().sort_index().rename("count").to_frame()
     counts["pct"] = (counts["count"] / counts["count"].sum() * 100).round(2)
     _X_all = np.asarray(combined.X, dtype=np.float64)
@@ -300,12 +268,77 @@ def process_csv(csv_file: str) -> None:
             counts.loc[mc, f"{ch}_p75"]      = round(float(np.percentile(vals, 75)), 2)
             counts.loc[mc, f"{ch}_max"]      = round(float(np.max(vals)), 2)
 
+    # ── Manual quadrant assignment ─────────────────────────────────────────────
+    # Quadrant convention: 1=Ch1+Ch2+, 2=Ch1+Ch2-, 3=Ch1-Ch2-, 4=Ch1-Ch2+
+    print("\nAssign quadrant (1\u20134) to each metacluster.")
+    print("  1=Ch1+Ch2+  2=Ch1+Ch2-  3=Ch1-Ch2-  4=Ch1-Ch2+  (blank = NaN)")
+    print(counts[["count", "pct", "ch1_centroid", "ch2_centroid"]].to_string())
+    _mc_list = sorted(np.unique(_mc_all))
+    _quads: dict = {}
+    for mc in _mc_list:
+        while True:
+            _ans = input(f"  Metacluster {mc} quadrant [1/2/3/4 or Enter=NaN]: ").strip()
+            if _ans == "":
+                _quads[mc] = float("nan")
+                break
+            elif _ans in ("1", "2", "3", "4"):
+                _quads[mc] = int(_ans)
+                break
+            else:
+                print("    Please enter 1, 2, 3, 4, or press Enter for NaN.")
+    counts["quadrant"] = [_quads[mc] for mc in counts.index]
+
+    # ── 7. Scatter plot with quadrant annotations ──────────────────────────────
+    max_pts   = 200_000
+    _plot_idx = np.random.default_rng(0).choice(combined.n_obs, min(max_pts, combined.n_obs), replace=False)
+    _plot_idx.sort()
+    X       = np.asarray(combined.X[_plot_idx], dtype=np.float64)
+    mc_plot = np.asarray(combined.obs["metacluster"].values[_plot_idx], dtype=int)
+
+    plt.close("all")          # discard figures left over from parallel workers
+    plt.style.use("default")  # restore clean rcParams after parallel corruption
+    fig, ax = plt.subplots(figsize=(6, 5), facecolor="white")
+    ax.set_facecolor("white")
+    _quad_label = {1: "Q1(++)", 2: "Q2(+-)", 3: "Q3(--)", 4: "Q4(-+)"}
+    for mc in sorted(np.unique(mc_plot)):
+        mask = mc_plot == mc
+        _q = _quads.get(mc)
+        _qlabel = f" {_quad_label[_q]}" if isinstance(_q, int) else ""
+        ax.scatter(X[mask, 1], X[mask, 0], s=5, alpha=0.6, label=f"MC{mc}{_qlabel}")
+        _cx = float(counts.loc[mc, "ch2_centroid"])
+        _cy = float(counts.loc[mc, "ch1_centroid"])
+        _tag = f"Q{_q}" if isinstance(_q, int) else "?"
+        ax.annotate(
+            f"MC{mc}\n{_tag}",
+            xy=(_cx, _cy), fontsize=8, fontweight="bold", ha="center", va="center",
+            color="black",
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.7),
+        )
+    ax.set_xlabel("Ch2Amplitude")
+    ax.set_ylabel("Ch1Amplitude")
+    ax.legend(markerscale=8, title="Metacluster")
+    ax.set_title(f"FlowSOM (optimised) \u2013 {os.path.basename(csv_file)}  {combined.n_obs:,} droplets")
+    _sil_str   = "nan" if np.isnan(best_score) else f"{best_score:.3f}"
+    param_text = (
+        f"xdim={XDIM}  ydim={YDIM}  rlen={RLEN}  nc={N_CLUSTERS}"
+        f"  sil={_sil_str}  trials={N_TRIALS}"
+    )
+    ax.text(0.01, 0.01, param_text, transform=ax.transAxes, fontsize=7,
+            verticalalignment="bottom", color="gray", family="monospace")
+    fig.tight_layout()
+
+    tag     = f"_opt_xdim{XDIM}_ydim{YDIM}_rlen{RLEN}_nc{N_CLUSTERS}"
+    out_png = os.path.join(out_dir, f"ddPCR_clusters{tag}.png")
+    fig.savefig(out_png, dpi=150, facecolor="white", bbox_inches="tight")
+    print(f"\nSaved scatter plot \u2192 {out_png}")
+
+    # ── 8. Save counts CSV ─────────────────────────────────────────────────────
     out_csv = os.path.join(out_dir, f"ddPCR_cluster_counts{tag}.csv")
     counts.to_csv(out_csv)
     print(f"Saved cluster counts  → {out_csv}")
     print(counts.to_string())
 
-    # ── 8. Append to meta-dataset (for supervised predictor training) ──────────
+    # ── 9. Append to meta-dataset (for supervised predictor training) ──────────
     def extract_features(X: np.ndarray) -> dict:
         """Compute summary statistics from raw amplitude data for meta-learning."""
         feat: dict = {}
@@ -352,7 +385,6 @@ def process_csv(csv_file: str) -> None:
                 print("  Please enter y or n.")
 
         print("\nManual labels for this well:")
-        features["normal_cluster_distribution"] = _ask_bool("  Normal cluster distribution?")
         features["clear_clustering"]            = _ask_bool("  Clear clustering?")
         features["mut_found"]                   = _ask_bool("  Mut found?")
         meta_row = pd.DataFrame([features])
