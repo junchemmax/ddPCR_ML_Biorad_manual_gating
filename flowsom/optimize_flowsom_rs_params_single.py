@@ -163,7 +163,7 @@ def process_csv(csv_file: str) -> None:
     data     = combined.X.astype(np.float64)
     print(f"Loaded {combined.n_obs:,} droplets from '{os.path.basename(csv_file)}' (well={well}).\n")
 
-    # Pre-draw fixed subsample indices (shared across all trials for fair comparison)
+    # ── 2. Pre-draw fixed subsample indices (shared across all trials for fair comparison)
     rng       = np.random.default_rng(SEED)
     eval_idx  = rng.choice(len(data), min(EVAL_PTS, len(data)), replace=False)
     eval_data = data[eval_idx]
@@ -249,75 +249,9 @@ def process_csv(csv_file: str) -> None:
     print("\nDroplets per metacluster:")
     print(combined.obs["metacluster"].value_counts().sort_index())
 
-    # ── 6. Per-droplet counts table + quadrant assignment ─────────────────────
-    counts = combined.obs["metacluster"].value_counts().sort_index().rename("count").to_frame()
+    # ── 6. Per-droplet counts table ───────────────────────
+    counts = combined.obs["metacluster"].value_counts().sort_index().rename_axis("metacluster").reset_index(name="count")
     counts["pct"] = (counts["count"] / counts["count"].sum() * 100).round(2)
-    _X_all = np.asarray(combined.X, dtype=np.float64)
-    _mc_all = np.asarray(combined.obs["metacluster"].values, dtype=int)
-    for mc in sorted(np.unique(_mc_all)):
-        mask = _mc_all == mc
-        for i, ch in enumerate(["ch1", "ch2"]):
-            vals = _X_all[mask, i]
-            counts.loc[mc, f"{ch}_centroid"] = round(float(np.mean(vals)), 2)
-
-    # ── 6b. Relative features (rank, z-score, pairwise distances) ─────────────
-    _mc_indices    = list(counts.index)
-    n_clust_actual = len(_mc_indices)
-    counts["n_clusters"] = n_clust_actual
-
-    centroids_ch1 = counts["ch1_centroid"].values.astype(float)
-    centroids_ch2 = counts["ch2_centroid"].values.astype(float)
-
-    # Ch2/Ch1 centroid ratio — channel balance; scale-invariant, Q-discriminating:
-    #   Q2 (Ch1+Ch2-) → low ratio   Q4 (Ch1-Ch2+) → high ratio
-    #   Q1 (Ch1+Ch2+) → moderate    Q3 (Ch1-Ch2-) → moderate (but lowest absolute values)
-    counts["ch2_ch1_ratio"] = (centroids_ch2 / (centroids_ch1 + 1e-9)).round(4)
-
-    # Range-normalised centroid position within this well [0=min cluster, 1=max cluster]
-    _ch1_range = centroids_ch1.max() - centroids_ch1.min()
-    _ch2_range = centroids_ch2.max() - centroids_ch2.min()
-    counts["ch1_pos_in_range"] = ((centroids_ch1 - centroids_ch1.min()) / (_ch1_range + 1e-9)).round(4)
-    counts["ch2_pos_in_range"] = ((centroids_ch2 - centroids_ch2.min()) / (_ch2_range + 1e-9)).round(4)
-
-    # Cluster-size-weighted z-score of each cluster's centroid within the well
-    _wt        = counts["count"].values.astype(float)
-    _ch1_wmean = np.average(centroids_ch1, weights=_wt)
-    _ch2_wmean = np.average(centroids_ch2, weights=_wt)
-    _ch1_wstd  = np.sqrt(np.average((centroids_ch1 - _ch1_wmean) ** 2, weights=_wt)) + 1e-9
-    _ch2_wstd  = np.sqrt(np.average((centroids_ch2 - _ch2_wmean) ** 2, weights=_wt)) + 1e-9
-    counts["ch1_centroid_zscore"] = ((centroids_ch1 - _ch1_wmean) / _ch1_wstd).round(4)
-    counts["ch2_centroid_zscore"] = ((centroids_ch2 - _ch2_wmean) / _ch2_wstd).round(4)
-
-    # Size rank (1 = largest cluster) — dominant cluster is almost always Q3
-    counts["size_rank"] = counts["count"].rank(ascending=False, method="min").astype(int)
-
-    # Sign of weighted z-score: together these nearly directly encode the quadrant
-    #   ch1_zscore_pos=0, ch2_zscore_pos=0 → Q3 (Ch1-Ch2-)  most common (empty droplets)
-    #   ch1_zscore_pos=1, ch2_zscore_pos=0 → Q2 (Ch1+Ch2-)
-    #   ch1_zscore_pos=0, ch2_zscore_pos=1 → Q4 (Ch1-Ch2+)
-    #   ch1_zscore_pos=1, ch2_zscore_pos=1 → Q1 (Ch1+Ch2+)
-    counts["ch1_zscore_pos"] = (counts["ch1_centroid_zscore"] > 0).astype(int)
-    counts["ch2_zscore_pos"] = (counts["ch2_centroid_zscore"] > 0).astype(int)
-
-    # ── Manual quadrant assignment ─────────────────────────────────────────────
-    # Quadrant convention: 1=Ch1+Ch2+, 2=Ch1+Ch2-, 3=Ch1-Ch2-, 4=Ch1-Ch2+
-    print("\nAssign quadrant (1\u20134) to each metacluster.")
-    print("  1=Ch1+Ch2+  2=Ch1+Ch2-  3=Ch1-Ch2-  4=Ch1-Ch2+  (blank = NaN)")
-    print(counts[["count", "pct", "ch1_centroid", "ch2_centroid"]].to_string())
-    _mc_list = sorted(np.unique(_mc_all))
-    _quads: dict = {}
-    for mc in _mc_list:
-        while True:
-            _ans = input(f"  Metacluster {mc} quadrant [1/2/3/4 or Enter=NaN]: ").strip()
-            if _ans == "":
-                _quads[mc] = float("nan")
-                break
-            elif _ans in ("1", "2", "3", "4"):
-                _quads[mc] = int(_ans)
-                break
-            else:
-                print("    Please enter 1, 2, 3, 4, or press Enter for NaN.")
-    counts["quadrant"] = [_quads[mc] for mc in counts.index]
 
     # ── 7. Scatter plot with quadrant annotations ──────────────────────────────
     max_pts   = 200_000
@@ -330,21 +264,9 @@ def process_csv(csv_file: str) -> None:
     plt.style.use("default")  # restore clean rcParams after parallel corruption
     fig, ax = plt.subplots(figsize=(6, 5), facecolor="white")
     ax.set_facecolor("white")
-    _quad_label = {1: "Q1(++)", 2: "Q2(+-)", 3: "Q3(--)", 4: "Q4(-+)"}
     for mc in sorted(np.unique(mc_plot)):
         mask = mc_plot == mc
-        _q = _quads.get(mc)
-        _qlabel = f" {_quad_label[_q]}" if isinstance(_q, int) else ""
-        ax.scatter(X[mask, 1], X[mask, 0], s=5, alpha=0.6, label=f"MC{mc}{_qlabel}")
-        _cx = float(counts.loc[mc, "ch2_centroid"])
-        _cy = float(counts.loc[mc, "ch1_centroid"])
-        _tag = f"Q{_q}" if isinstance(_q, int) else "?"
-        ax.annotate(
-            f"MC{mc}\n{_tag}",
-            xy=(_cx, _cy), fontsize=8, fontweight="bold", ha="center", va="center",
-            color="black",
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.7),
-        )
+        ax.scatter(X[mask, 1], X[mask, 0], s=5, alpha=0.6, label=f"MC{mc}")
     ax.set_xlabel("Ch2Amplitude")
     ax.set_ylabel("Ch1Amplitude")
     ax.legend(markerscale=8, title="Metacluster")
@@ -357,7 +279,6 @@ def process_csv(csv_file: str) -> None:
     ax.text(0.01, 0.01, param_text, transform=ax.transAxes, fontsize=7,
             verticalalignment="bottom", color="gray", family="monospace")
     fig.tight_layout()
-
     tag     = f"_opt_xdim{XDIM}_ydim{YDIM}_rlen{RLEN}_nc{N_CLUSTERS}"
     out_png = os.path.join(out_dir, f"ddPCR_clusters{tag}.png")
     fig.savefig(out_png, dpi=150, facecolor="white", bbox_inches="tight")
@@ -365,7 +286,7 @@ def process_csv(csv_file: str) -> None:
 
     # ── 8. Save counts CSV ─────────────────────────────────────────────────────
     out_csv = os.path.join(out_dir, f"ddPCR_cluster_counts{tag}.csv")
-    counts.to_csv(out_csv)
+    counts.to_csv(out_csv, index=False)
     print(f"Saved cluster counts  → {out_csv}")
     print(counts.to_string())
 
