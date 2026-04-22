@@ -47,9 +47,16 @@ _parser.add_argument(
     default=40,
     help="Number of Optuna trials (default: 40)",
 )
+_parser.add_argument(
+    "--n_clusters",
+    type=int,
+    default=None,
+    help="Fix n_clusters to this value (skip optimisation over n_clusters). Default: optimise.",
+)
 _args = _parser.parse_args()
 CSV_FOLDER = os.path.normpath(_args.folder)
-N_CLUST_RANGE = (2, 4)   # n_clusters is optimised by Optuna
+N_CLUST_RANGE = (2, 4)   # n_clusters is optimised by Optuna (unless --n_clusters is set)
+FIXED_N_CLUSTERS = _args.n_clusters
 SEED          = 42       # reproducibility
 N_TRIALS      = _args.trials  # Optuna trials (≈2-5 min on a laptop; override with --trials)
 EVAL_PTS      = 50_000   # subsample size for silhouette (keeps it fast)
@@ -124,7 +131,11 @@ def objective(trial: optuna.Trial) -> float:
     xdim       = trial.suggest_int("xdim", XDIM_RANGE[0], XDIM_RANGE[1], step=2)
     ydim       = trial.suggest_int("ydim", YDIM_RANGE[0], YDIM_RANGE[1], step=2)
     rlen       = trial.suggest_int("rlen", RLEN_RANGE[0], RLEN_RANGE[1], log=True)
-    n_clusters = trial.suggest_int("n_clusters", N_CLUST_RANGE[0], N_CLUST_RANGE[1])
+    if FIXED_N_CLUSTERS is not None:
+        n_clusters = FIXED_N_CLUSTERS
+        trial.set_user_attr("n_clusters", n_clusters)
+    else:
+        n_clusters = trial.suggest_int("n_clusters", N_CLUST_RANGE[0], N_CLUST_RANGE[1])
 
     _, node_meta, bmu_idx = _run_flowsom(xdim, ydim, rlen, n_clusters)
     labels_eval = node_meta[bmu_idx][eval_idx]
@@ -181,7 +192,9 @@ def process_csv(csv_file: str) -> None:
 
     print(f"Trial PNGs saved → {TRIALS_DIR}  (sort by filename to rank by silhouette score)")
 
-    auto_best  = study.best_params
+    auto_best  = dict(study.best_params)
+    if FIXED_N_CLUSTERS is not None:
+        auto_best["n_clusters"] = FIXED_N_CLUSTERS
     auto_score = study.best_value
     print(f"\nBest parameters found (by silhouette score):")
     print(f"  XDIM       = {auto_best['xdim']}")
@@ -192,8 +205,13 @@ def process_csv(csv_file: str) -> None:
 
     # ── 4. Top-5 trials summary ────────────────────────────────────────────────
     print("\nTop-5 trials:")
-    trials_df = study.trials_dataframe()[["number", "value", "params_xdim", "params_ydim", "params_rlen", "params_n_clusters"]]
+    _td_cols = ["number", "value", "params_xdim", "params_ydim", "params_rlen"]
+    if FIXED_N_CLUSTERS is None:
+        _td_cols.append("params_n_clusters")
+    trials_df = study.trials_dataframe()[_td_cols]
     trials_df = trials_df.rename(columns={"value": "silhouette"}).sort_values("silhouette", ascending=False)
+    if FIXED_N_CLUSTERS is not None:
+        trials_df["params_n_clusters"] = FIXED_N_CLUSTERS
     print(trials_df.head(5).to_string(index=False))
 
     # ── 4b. Manual override ────────────────────────────────────────────────────
@@ -222,7 +240,9 @@ def process_csv(csv_file: str) -> None:
         try:
             _trial_num = int(_choice)
             _trial     = study.trials[_trial_num]
-            best       = _trial.params
+            best       = dict(_trial.params)
+            if FIXED_N_CLUSTERS is not None:
+                best["n_clusters"] = FIXED_N_CLUSTERS
             best_score = _trial.value if _trial.value is not None else float("nan")
             print(
                 f"Using trial {_trial_num}: "
