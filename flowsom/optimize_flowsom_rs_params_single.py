@@ -368,7 +368,6 @@ def process_csv(csv_file: str) -> None:
     features["best_xdim"]        = float("nan") if is_one_cluster else XDIM
     features["best_ydim"]        = float("nan") if is_one_cluster else YDIM
     features["best_rlen"]        = float("nan") if is_one_cluster else RLEN
-    features["best_silhouette"]  = float("nan") if (is_one_cluster or METRIC != "silhouette") else round(best_score, 6)
 
     if skip_meta:
         print("\nMeta-dataset entry skipped (user requested 'skip').")
