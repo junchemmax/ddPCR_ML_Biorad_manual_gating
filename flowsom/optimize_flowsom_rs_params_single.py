@@ -33,7 +33,7 @@ from scipy.signal import find_peaks
 from scipy.spatial.distance import pdist, squareform
 from scipy.stats import gaussian_kde, kurtosis, skew
 from sklearn.cluster import AgglomerativeClustering
-from sklearn.metrics import silhouette_score
+from sklearn.metrics import davies_bouldin_score, silhouette_score
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 _parser = argparse.ArgumentParser(description="FlowSOM Bayesian optimisation over a folder of Amplitude CSVs.")
@@ -53,13 +53,21 @@ _parser.add_argument(
     default=None,
     help="Fix n_clusters to this value (skip optimisation over n_clusters). Default: optimise.",
 )
+_parser.add_argument(
+    "--metric",
+    type=str,
+    default="silhouette",
+    choices=["silhouette", "davies_bouldin"],
+    help="Clustering quality metric: 'silhouette' (higher is better) or 'davies_bouldin' (lower is better). Default: silhouette",
+)
 _args = _parser.parse_args()
 CSV_FOLDER = os.path.normpath(_args.folder)
 N_CLUST_RANGE = (2, 4)   # n_clusters is optimised by Optuna (unless --n_clusters is set)
 FIXED_N_CLUSTERS = _args.n_clusters
+METRIC        = _args.metric  # 'silhouette' or 'davies_bouldin'
 SEED          = 42       # reproducibility
 N_TRIALS      = _args.trials  # Optuna trials (≈2-5 min on a laptop; override with --trials)
-EVAL_PTS      = 50_000   # subsample size for silhouette (keeps it fast)
+EVAL_PTS      = 50_000   # subsample size for metric evaluation (keeps it fast)
 N_JOBS        = -1       # parallel jobs (set to 1 if you get memory issues)
 
 # Search space – feel free to widen
@@ -114,14 +122,15 @@ def _save_trial_png(trial_number: int, xdim: int, ydim: int, rlen: int, n_cluste
     ax.set_xlabel("Ch2Amplitude")
     ax.set_ylabel("Ch1Amplitude")
     ax.legend(markerscale=6, title="MC", fontsize=7)
+    metric_abbr = "sil" if METRIC == "silhouette" else "dbi"
     ax.set_title(
         f"Trial {trial_number:03d}  xdim={xdim} ydim={ydim} rlen={rlen} nc={n_clusters}  "
-        f"sil={score:.4f}",
+        f"{metric_abbr}={score:.4f}",
         fontsize=9,
     )
     fig.tight_layout()
     fname = (
-        f"trial_sil{score:+.4f}_t{trial_number:03d}"
+        f"trial_{metric_abbr}{score:+.4f}_t{trial_number:03d}"
         f"_xdim{xdim}_ydim{ydim}_rlen{rlen}_nc{n_clusters}.png"
     )
     fig.savefig(os.path.join(TRIALS_DIR, fname), dpi=100, facecolor="white")
@@ -140,12 +149,17 @@ def objective(trial: optuna.Trial) -> float:
     _, node_meta, bmu_idx = _run_flowsom(xdim, ydim, rlen, n_clusters)
     labels_eval = node_meta[bmu_idx][eval_idx]
 
-    # Guard: silhouette undefined if only 1 unique label appears in subsample
+    # Guard: metric undefined if only 1 unique label appears in subsample
     if len(np.unique(labels_eval)) < 2:
-        _save_trial_png(trial.number, xdim, ydim, rlen, n_clusters, node_meta, bmu_idx, score=-1.0)
-        return -1.0
+        bad_score = -1.0 if METRIC == "silhouette" else 1e9  # bad value for each metric type
+        _save_trial_png(trial.number, xdim, ydim, rlen, n_clusters, node_meta, bmu_idx, score=bad_score)
+        return bad_score
 
-    score = silhouette_score(eval_data, labels_eval, sample_size=None)
+    if METRIC == "silhouette":
+        score = silhouette_score(eval_data, labels_eval, sample_size=None)
+    else:  # davies_bouldin
+        score = davies_bouldin_score(eval_data, labels_eval)
+    
     _save_trial_png(trial.number, xdim, ydim, rlen, n_clusters, node_meta, bmu_idx, score)
     return float(score)
 
@@ -185,23 +199,26 @@ def process_csv(csv_file: str) -> None:
     plot_data = data[plot_idx]
 
     # ── 3. Run the study ───────────────────────────────────────────────────────
-    print(f"Running Optuna study ({N_TRIALS} trials) …")
+    print(f"Running Optuna study ({N_TRIALS} trials) with {METRIC} metric …")
     sampler = optuna.samplers.TPESampler(seed=SEED)
-    study   = optuna.create_study(direction="maximize", sampler=sampler)
+    opt_direction = "maximize" if METRIC == "silhouette" else "minimize"
+    study   = optuna.create_study(direction=opt_direction, sampler=sampler)
     study.optimize(objective, n_trials=N_TRIALS, show_progress_bar=True, n_jobs=N_JOBS)
 
-    print(f"Trial PNGs saved → {TRIALS_DIR}  (sort by filename to rank by silhouette score)")
+    metric_name = "Silhouette Score" if METRIC == "silhouette" else "Davies-Bouldin Index"
+    print(f"Trial PNGs saved → {TRIALS_DIR}  (sort by filename to rank by {metric_name})")
 
     auto_best  = dict(study.best_params)
     if FIXED_N_CLUSTERS is not None:
         auto_best["n_clusters"] = FIXED_N_CLUSTERS
     auto_score = study.best_value
-    print(f"\nBest parameters found (by silhouette score):")
+    metric_name = "Silhouette Score" if METRIC == "silhouette" else "Davies-Bouldin Index"
+    print(f"\nBest parameters found (by {metric_name}):")
     print(f"  XDIM       = {auto_best['xdim']}")
     print(f"  YDIM       = {auto_best['ydim']}")
     print(f"  RLEN       = {auto_best['rlen']}")
     print(f"  N_CLUSTERS = {auto_best['n_clusters']}")
-    print(f"  Silhouette Score = {auto_score:.4f}")
+    print(f"  {metric_name} = {auto_score:.4f}")
 
     # ── 4. Top-5 trials summary ────────────────────────────────────────────────
     print("\nTop-5 trials:")
@@ -209,14 +226,15 @@ def process_csv(csv_file: str) -> None:
     if FIXED_N_CLUSTERS is None:
         _td_cols.append("params_n_clusters")
     trials_df = study.trials_dataframe()[_td_cols]
-    trials_df = trials_df.rename(columns={"value": "silhouette"}).sort_values("silhouette", ascending=False)
+    metric_col_name = "silhouette" if METRIC == "silhouette" else "davies_bouldin"
+    trials_df = trials_df.rename(columns={"value": metric_col_name}).sort_values(metric_col_name, ascending=(METRIC == "davies_bouldin"))
     if FIXED_N_CLUSTERS is not None:
         trials_df["params_n_clusters"] = FIXED_N_CLUSTERS
     print(trials_df.head(5).to_string(index=False))
 
     # ── 4b. Manual override ────────────────────────────────────────────────────
     print(f"\nReview the PNGs in: {TRIALS_DIR}")
-    print(f"The automatic best is #{study.best_trial.number} with silhouette {auto_score:.4f}.")
+    print(f"The automatic best is #{study.best_trial.number} with {metric_name} {auto_score:.4f}.")
     print("Press Enter to accept the automatic best, type a trial number to use instead, '1cluster' to mark as single-cluster, or 'skip' to skip saving to meta-dataset.")
     _choice = input("Manual trial number / '1cluster' / 'skip' (or Enter to accept best): ").strip()
 
@@ -292,9 +310,10 @@ def process_csv(csv_file: str) -> None:
     ax.legend(markerscale=8, title="Metacluster")
     ax.set_title(f"FlowSOM (optimised) \u2013 {os.path.basename(csv_file)}  {combined.n_obs:,} droplets")
     _sil_str   = "nan" if np.isnan(best_score) else f"{best_score:.3f}"
+    metric_abbr = "sil" if METRIC == "silhouette" else "dbi"
     param_text = (
         f"xdim={XDIM}  ydim={YDIM}  rlen={RLEN}  nc={N_CLUSTERS}"
-        f"  sil={_sil_str}  trials={N_TRIALS}"
+        f"  {metric_abbr}={_sil_str}  trials={N_TRIALS}"
     )
     ax.text(0.01, 0.01, param_text, transform=ax.transAxes, fontsize=7,
             verticalalignment="bottom", color="gray", family="monospace")
@@ -344,11 +363,12 @@ def process_csv(csv_file: str) -> None:
 
     features = extract_features(data)
     features["dataset"]          = os.path.splitext(os.path.basename(csv_file))[0]
+    features["metric"]           = METRIC
     features["best_n_clusters"]  = N_CLUSTERS
     features["best_xdim"]        = float("nan") if is_one_cluster else XDIM
     features["best_ydim"]        = float("nan") if is_one_cluster else YDIM
     features["best_rlen"]        = float("nan") if is_one_cluster else RLEN
-    features["best_silhouette"]  = float("nan") if is_one_cluster else round(best_score, 6)
+    features["best_score"]       = float("nan") if is_one_cluster else round(best_score, 6)
 
     if skip_meta:
         print("\nMeta-dataset entry skipped (user requested 'skip').")
