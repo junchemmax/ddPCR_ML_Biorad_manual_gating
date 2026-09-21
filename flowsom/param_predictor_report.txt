@@ -1,0 +1,39 @@
+FlowSOM Param Predictor – Training Report
+==================================================
+Training samples (cluster model) : 222
+Training samples (grid model)    : 176
+Features                         : 22
+Cluster CV strategy              : 5
+Cluster CV accuracy              : 0.680
+Grid CV strategy                 : 5
+Grid CV MAE (avg)                : 11.020 ± 0.808
+
+Per-target cross-validated predictions:
+  best_n_clusters : accuracy = 0.680
+  best_xdim       : MAE = 3.04
+  best_ydim       : MAE = 3.03
+  best_rlen       : MAE = 26.98
+
+Feature importances (grid model):
+  ch2_bimodality                 0.0582
+  ch2_skew                       0.0561
+  ch2_iqr                        0.0549
+  ch1_outlier_frac               0.0542
+  ch1_log_std                    0.0540
+  ch2_cv                         0.0516
+  ch1_bimodality                 0.0512
+  ch1_ch2_corr                   0.0511
+  ch2_log_skew                   0.0509
+  ch1_cv                         0.0505
+  ch2_log_std                    0.0502
+  n_droplets                     0.0486
+  ch1_log_skew                   0.0482
+  ch2_std                        0.0481
+  ch2_kurt                       0.0474
+  ch1_kurt                       0.0466
+  ch1_iqr                        0.0460
+  ch1_skew                       0.0452
+  ch1_std                        0.0427
+  ch2_outlier_frac               0.0302
+  ch1_kde_peaks                  0.0072
+  ch2_kde_peaks                  0.0070

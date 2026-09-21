@@ -18,14 +18,21 @@ import warnings
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+import flowsom_rs
 import joblib
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
+from scipy.spatial.distance import pdist, squareform
 from scipy.stats import gaussian_kde, kurtosis, skew
+from sklearn.cluster import AgglomerativeClustering
 
 HERE      = os.path.dirname(os.path.abspath(__file__))
 MODEL_PKL = os.path.join(HERE, "param_predictor.pkl")
+SEED      = 42
 
 
 # ── Feature extraction (must match optimize_flowsom_rs_params_single.py) ─────────
@@ -89,13 +96,7 @@ if not csv_files:
     print(f"No CSV files found in: {data_dir}")
     sys.exit(1)
 
-print(f"Loading {len(csv_files)} CSV files from: {data_dir}")
-frames = []
-for f in csv_files:
-    df = pd.read_csv(f, skiprows=3)[["Ch1Amplitude", "Ch2Amplitude"]].dropna()
-    frames.append(df.values.astype(np.float64))
-data = np.concatenate(frames, axis=0)
-print(f"Total droplets: {len(data):,}")
+print(f"Found {len(csv_files)} CSV file(s) in: {data_dir}")
 
 # ── Load model ─────────────────────────────────────────────────────────────────
 if not os.path.exists(MODEL_PKL):
@@ -107,37 +108,107 @@ if not os.path.exists(MODEL_PKL):
     )
     sys.exit(1)
 
-bundle       = joblib.load(MODEL_PKL)
-pipeline     = bundle["pipeline"]
-feature_cols = bundle["feature_cols"]
+bundle           = joblib.load(MODEL_PKL)
+cluster_pipeline = bundle["cluster_pipeline"]
+grid_pipeline    = bundle["grid_pipeline"]
+feature_cols     = bundle["feature_cols"]
 
-# ── Predict ────────────────────────────────────────────────────────────────────
-features = extract_features(data)
-X_new    = np.array([[features[c] for c in feature_cols]])
 
-pred = pipeline.predict(X_new)[0]
-
-# TARGET_COLS order: best_n_clusters, best_xdim, best_ydim, best_rlen
 def round_even(v: float) -> int:
     i = int(round(v))
     return i if i % 2 == 0 else i + 1
 
-nclust_pred = max(1, int(round(pred[0])))
-xdim_pred   = round_even(pred[1])
-ydim_pred   = round_even(pred[2])
-rlen_pred   = max(5, int(round(pred[3])))
 
-print("\n── Predicted FlowSOM parameters ──────────────────")
-print(f"  N_CLUSTERS = {nclust_pred}")
-print(f"  XDIM = {xdim_pred}")
-print(f"  YDIM = {ydim_pred}")
-print(f"  RLEN = {rlen_pred}")
-print("──────────────────────────────────────────────────")
+def _run_flowsom(data: np.ndarray, xdim: int, ydim: int, rlen: int, n_clusters: int, seed: int = SEED):
+    """Train SOM + metacluster; return (node_meta, bmu_idx)."""
+    n_nodes    = xdim * ydim
+    grid       = [(x, y) for x in range(xdim) for y in range(ydim)]
+    nhbrdist   = squareform(pdist(grid, metric="chebyshev"))
+    radii      = (np.quantile(nhbrdist, 0.67), 0.0)
+    codes_init = data[np.random.default_rng(seed).choice(len(data), n_nodes, replace=False)]
+
+    codes, bmu_idx, _ = flowsom_rs.train_batch_som(data, codes_init, nhbrdist, radii, rlen=rlen)
+    node_meta = AgglomerativeClustering(
+        n_clusters=n_clusters, linkage="average"
+    ).fit_predict(codes)
+    return node_meta, bmu_idx
+
+
+def _save_cluster_png(data: np.ndarray, metacluster: np.ndarray, out_png: str, csv_name: str,
+                       xdim: int, ydim: int, rlen: int, n_clusters: int) -> None:
+    """Save a scatter plot colored by predicted metacluster (no Optuna trial ranking)."""
+    max_pts   = 200_000
+    plot_idx  = np.random.default_rng(0).choice(len(data), min(max_pts, len(data)), replace=False)
+    plot_idx.sort()
+    X       = data[plot_idx]
+    mc_plot = metacluster[plot_idx]
+
+    plt.close("all")
+    fig, ax = plt.subplots(figsize=(6, 5), facecolor="white")
+    ax.set_facecolor("white")
+    for mc in sorted(np.unique(mc_plot)):
+        mask = mc_plot == mc
+        ax.scatter(X[mask, 1], X[mask, 0], s=5, alpha=0.6, label=f"MC{mc}")
+    ax.set_xlabel("Ch2Amplitude")
+    ax.set_ylabel("Ch1Amplitude")
+    ax.legend(markerscale=8, title="Metacluster")
+    ax.set_title(f"FlowSOM (predicted params) \u2013 {csv_name}  {len(data):,} droplets")
+    param_text = f"xdim={xdim}  ydim={ydim}  rlen={rlen}  nc={n_clusters}  (predicted, not optimised)"
+    ax.text(0.01, 0.01, param_text, transform=ax.transAxes, fontsize=7,
+            verticalalignment="bottom", color="gray", family="monospace")
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=150, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+
+
+# ── Predict per well (matches how each training row was built) ────────────────
+for f in csv_files:
+    df   = pd.read_csv(f, skiprows=3)[["Ch1Amplitude", "Ch2Amplitude"]].dropna()
+    data = df.values.astype(np.float64)
+
+    print(f"\n{'=' * 70}")
+    print(f"{os.path.basename(f)}  ({len(data):,} droplets)")
+    print(f"{'=' * 70}")
+
+    features = extract_features(data)
+    X_new    = np.array([[features[c] for c in feature_cols]])
+
+    nclust_pred = max(1, int(cluster_pipeline.predict(X_new)[0]))
+
+    print("── Predicted FlowSOM parameters ──────────────────")
+    print(f"  N_CLUSTERS = {nclust_pred}")
+    if nclust_pred == 1:
+        print("  (single-cluster predicted; XDIM/YDIM/RLEN grid is not applicable)")
+        metacluster = np.ones(len(data), dtype=int)
+        xdim_pred = ydim_pred = rlen_pred = None
+    else:
+        grid_pred = grid_pipeline.predict(X_new)[0]
+        xdim_pred = round_even(grid_pred[0])
+        ydim_pred = round_even(grid_pred[1])
+        rlen_pred = max(5, int(round(grid_pred[2])))
+        print(f"  XDIM = {xdim_pred}")
+        print(f"  YDIM = {ydim_pred}")
+        print(f"  RLEN = {rlen_pred}")
+        node_meta, bmu_idx = _run_flowsom(data, xdim_pred, ydim_pred, rlen_pred, nclust_pred)
+        metacluster = node_meta[bmu_idx] + 1
+    print("──────────────────────────────────────────────────")
+
+    csv_stem = os.path.splitext(os.path.basename(f))[0]
+    out_dir  = os.path.join(os.path.dirname(f), "output")
+    os.makedirs(out_dir, exist_ok=True)
+    tag     = f"_pred_nc{nclust_pred}" if xdim_pred is None else f"_pred_xdim{xdim_pred}_ydim{ydim_pred}_rlen{rlen_pred}_nc{nclust_pred}"
+    out_png = os.path.join(out_dir, f"{csv_stem}_clusters{tag}.png")
+    _save_cluster_png(
+        data, metacluster, out_png, os.path.basename(f),
+        xdim_pred or 0, ydim_pred or 0, rlen_pred or 0, nclust_pred,
+    )
+    print(f"Saved predicted-cluster plot → {out_png}")
+
 print("\nCopy these values into run_ddpcr_flowsom_flowsom_rs.py, or")
-print("use them as starting point for optimize_flowsom_params.py.")
+print("use them as starting point for optimize_flowsom_params.py (one file at a time).")
 
 # ── Raw confidence hint ────────────────────────────────────────────────────────
-meta_csv = os.path.join(HERE, "meta_dataset.csv")
+meta_csv = os.path.join(HERE, "output", "meta_dataset.csv")
 if os.path.exists(meta_csv):
     n_train = len(pd.read_csv(meta_csv))
     if n_train < 10:
@@ -147,3 +218,4 @@ if os.path.exists(meta_csv):
         )
     else:
         print(f"\n(Model trained on {n_train} datasets.)")
+
