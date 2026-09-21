@@ -14,12 +14,12 @@ This repository contains:
     - `*_Amplitude.csv` files (per-well amplitude exports)
     - `output/` folder for generated results
 - `flowsom/`
-  - `optimize_flowsom_rs_params_single.py` - Optuna + FlowSOM optimization over CSV files in a folder
+  - `optimize_flowsom_rs_params_single.py` - Optuna + FlowSOM optimization over CSV files in a folder; also appends rows to `output/meta_dataset.csv`
   - `feature_engineering_diagnostics.ipynb` - notebook for diagnostics/feature exploration
-  - `train_param_predictor.py_` - train supervised model from `meta_dataset.csv`
-  - `predict_params.py_` - predict FlowSOM parameters for new data
+  - `train_param_predictor.py_` - trains two models from `output/meta_dataset.csv`: a classifier for `N_CLUSTERS` and a regressor for `XDIM`/`YDIM`/`RLEN`
+  - `predict_params.py_` - predicts FlowSOM parameters per well for new data and saves a predicted-cluster scatter PNG per well
   - `quadrant_predictor_feature_generator.py_` - feature generation and manual quadrant assignment workflow
-  - `output/` - script-generated artifacts
+  - `output/` - script-generated artifacts, including `meta_dataset.csv`
 - `aws_s3_cmd.txt` - utility command notes
 
 ## What the Pipeline Does
@@ -91,14 +91,14 @@ Note: the optimization script includes an interactive prompt to accept auto-best
 
 ### 2) Build training data and train the parameter predictor
 
-After running optimization across several datasets and building a `meta_dataset.csv` in `flowsom/`:
+After running optimization across several datasets and building `flowsom/output/meta_dataset.csv`:
 
 ```bash
 python flowsom/train_param_predictor.py_
 ```
 
 This produces:
-- `flowsom/param_predictor.pkl`
+- `flowsom/param_predictor.pkl` - bundles a cluster-count classifier and a grid (XDIM/YDIM/RLEN) regressor
 - `flowsom/param_predictor_report.txt`
 
 ### 3) Predict parameters for a new dataset
@@ -107,18 +107,18 @@ This produces:
 python flowsom/predict_params.py_ ddPCR_data/MIP_070
 ```
 
-The script prints predicted values for:
+For each `*_Amplitude.csv` file (well) in the folder, the script prints predicted values for:
 - `N_CLUSTERS`
 - `XDIM`
 - `YDIM`
 - `RLEN`
 
-Use these as warm-start values before a full Optuna search.
+and saves a scatter plot (`<csv_stem>_clusters_pred_....png`) to that dataset's `output/` folder, using FlowSOM run once with the predicted parameters. Use the printed values as warm-start hints before a full Optuna search.
 
 ## Typical Workflow
 
 1. Run `optimize_flowsom_rs_params_single.py` on multiple representative `MIP_XXX` folders.
-2. Accumulate metadata/features in `flowsom/meta_dataset.csv`.
+2. Accumulate metadata/features in `flowsom/output/meta_dataset.csv`.
 3. Train predictor with `train_param_predictor.py_`.
 4. Use `predict_params.py_` for new datasets.
 5. Optionally run full optimization again using predicted values as guidance.
@@ -130,7 +130,7 @@ Use these as warm-start values before a full Optuna search.
 - Missing columns:
   - Verify CSV contains `Ch1Amplitude` and `Ch2Amplitude`.
 - Poor prediction quality:
-  - Add more diverse training datasets to `meta_dataset.csv`.
+  - Add more diverse training datasets to `flowsom/output/meta_dataset.csv`.
   - Re-train predictor.
 - Memory/runtime pressure during optimization:
   - Reduce `--trials`.
