@@ -194,7 +194,7 @@ for f in csv_files:
     print("──────────────────────────────────────────────────")
 
     csv_stem = os.path.splitext(os.path.basename(f))[0]
-    out_dir  = os.path.join(os.path.dirname(f), "output")
+    out_dir  = os.path.join(os.path.dirname(f), "flowsom_output")
     os.makedirs(out_dir, exist_ok=True)
     tag     = f"_pred_nc{nclust_pred}" if xdim_pred is None else f"_pred_xdim{xdim_pred}_ydim{ydim_pred}_rlen{rlen_pred}_nc{nclust_pred}"
     out_png = os.path.join(out_dir, f"{csv_stem}_clusters{tag}.png")

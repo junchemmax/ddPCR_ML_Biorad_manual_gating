@@ -171,7 +171,7 @@ def process_csv(csv_file: str) -> None:
 
     # ── 1. Load CSV ────────────────────────────────────────────────────────────
     _csv_stem  = os.path.splitext(os.path.basename(csv_file))[0]
-    out_dir    = os.path.join(os.path.dirname(csv_file), "output", _csv_stem)
+    out_dir    = os.path.join(os.path.dirname(csv_file), "flowsom_output", _csv_stem)
     TRIALS_DIR = os.path.join(out_dir, "trials")
     os.makedirs(TRIALS_DIR, exist_ok=True)
 
