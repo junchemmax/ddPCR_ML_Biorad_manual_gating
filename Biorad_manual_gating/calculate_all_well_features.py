@@ -20,6 +20,52 @@ FEATURE_COLUMNS = [
 ]
 
 
+def parse_pipe_numbers(value: object) -> list[float]:
+    if pd.isna(value) or str(value).strip() == "":
+        return []
+    numbers = []
+    for item in str(value).split("|"):
+        try:
+            numbers.append(float(item))
+        except ValueError:
+            continue
+    return numbers
+
+
+def weighted_mean(values: list[float], weights: list[float]) -> float:
+    if not values or len(values) != len(weights) or sum(weights) == 0:
+        return np.nan
+    return float(np.average(values, weights=weights))
+
+
+def add_gate_features(gate_df: pd.DataFrame) -> pd.DataFrame:
+    gate_df = gate_df.copy()
+    for column in ["x_gate", "y_gate", "x_min_ch2", "x_max_ch2", "y_min_ch1", "y_max_ch1"]:
+        gate_df[column] = pd.to_numeric(gate_df[column], errors="coerce")
+    derived = gate_df.apply(
+        lambda row: pd.Series(
+            {
+                "gate_has_x": int(pd.notna(row["x_gate"])),
+                "gate_has_y": int(pd.notna(row["y_gate"])),
+                "gate_n_cluster_rows": len(parse_pipe_numbers(row["quadrant"])),
+                "gate_total_cluster_count": sum(parse_pipe_numbers(row["count"])),
+                "gate_ch1_mean_weighted": weighted_mean(
+                    parse_pipe_numbers(row["ch1_mean"]),
+                    parse_pipe_numbers(row["count"]),
+                ),
+                "gate_ch2_mean_weighted": weighted_mean(
+                    parse_pipe_numbers(row["ch2_mean"]),
+                    parse_pipe_numbers(row["count"]),
+                ),
+                "gate_ch2_range": row["x_max_ch2"] - row["x_min_ch2"],
+                "gate_ch1_range": row["y_max_ch1"] - row["y_min_ch1"],
+            }
+        ),
+        axis=1,
+    )
+    return pd.concat([gate_df, derived], axis=1)
+
+
 def kde_peak_count(values: np.ndarray) -> int:
     if len(values) < 3 or np.ptp(values) == 0:
         return 1
@@ -59,19 +105,13 @@ def extract_features(data: np.ndarray) -> dict[str, float]:
 def main() -> None:
     here = os.path.dirname(os.path.abspath(__file__))
     output_dir = os.path.join(here, "output")
-    meta_path = os.path.join(output_dir, "meta_dataset.csv")
     gate_path = os.path.join(output_dir, "biorad_cluster_gate_data.csv")
-    all_meta_path = os.path.join(output_dir, "meta_dataset_all_wells.csv")
-    all_merged_path = os.path.join(output_dir, "meta_biorad_cluster_dataset_all_wells.csv")
-
-    existing = pd.read_csv(meta_path)
-    gate = pd.read_csv(gate_path)
-    known_sources = set(existing["dataset"].astype(str) + ".csv")
+    gate = add_gate_features(pd.read_csv(gate_path))
     amplitude_paths = {}
     for path in glob.glob(os.path.join(os.path.dirname(here), "ddPCR_data", "**", "*_Amplitude.csv"), recursive=True):
         amplitude_paths.setdefault(os.path.basename(path), path)
 
-    missing_sources = [source for source in gate["source_amplitude_csv"] if source not in known_sources]
+    missing_sources = gate["source_amplitude_csv"].astype(str).tolist()
     rows = []
     for position, source in enumerate(missing_sources, start=1):
         amplitude_path = amplitude_paths[source]
@@ -81,32 +121,28 @@ def main() -> None:
         row = extract_features(data)
         row.update({
             "dataset": os.path.splitext(source)[0],
-            "best_n_clusters": np.nan,
-            "best_xdim": np.nan,
-            "best_ydim": np.nan,
-            "best_rlen": np.nan,
-            "clear_clustering": np.nan,
-            "mut_found": np.nan,
-            "metric": "biorad_cluster_gate",
         })
         rows.append(row)
         if position % 250 == 0 or position == len(missing_sources):
             print(f"Calculated {position}/{len(missing_sources)} missing wells")
 
-    calculated = pd.DataFrame(rows)
-    all_meta = pd.concat([existing, calculated], ignore_index=True)
-    all_meta = all_meta[[column for column in existing.columns if column in all_meta.columns]]
-    all_meta.to_csv(all_meta_path, index=False)
+    features = pd.DataFrame(rows)
+    gate["dataset"] = gate["source_amplitude_csv"].astype(str).str.replace(".csv", "", regex=False)
+    merged = gate.merge(features, on="dataset", how="left", validate="one_to_one")
+    merged = merged.drop(columns=["source_amplitude_csv"], errors="ignore")
+    merged = merged.rename(columns={
+        "gate_n_cluster_rows": "n_populated_quadrants",
+        "gate_ch1_mean_weighted": "weighted_mean_ch1_MUT",
+        "gate_ch2_mean_weighted": "weighted_mean_ch2_WT",
+        "gate_ch1_range": "amplitude_range_MUT",
+        "gate_ch2_range": "amplitude_range_WT",
+    })
+    output_path = os.path.join(output_dir, "full_biorad_cluster_dataset.csv")
+    merged.to_csv(output_path, index=False)
 
-    gate["source_amplitude_csv"] = gate["source_amplitude_csv"].astype(str)
-    all_meta["source_amplitude_csv"] = all_meta["dataset"].astype(str) + ".csv"
-    merged = gate.merge(all_meta, on="source_amplitude_csv", how="left", suffixes=("", "_meta"), validate="one_to_one")
-    merged.to_csv(all_merged_path, index=False)
-
-    print(f"Saved all-well metadata: {all_meta_path}")
-    print(f"Saved all-well merged data: {all_merged_path}")
+    print(f"Saved full dataset: {output_path}")
     print(f"Gate wells: {len(gate)}")
-    print(f"Calculated missing wells: {len(calculated)}")
+    print(f"Calculated wells: {len(features)}")
     print(f"Merged rows: {len(merged)}")
     print(f"Rows without features: {int(merged['n_droplets'].isna().sum())}")
 

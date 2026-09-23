@@ -43,6 +43,16 @@ def mip_output_dir(data_dir: str) -> str:
         current_dir = parent_dir
 
 
+def quadrant_label(target1: str, target2: str) -> str:
+    mapping = {
+        ("1", "1"): "Q1",
+        ("1", "0"): "Q2",
+        ("0", "0"): "Q3",
+        ("0", "1"): "Q4",
+    }
+    return mapping.get((target1.strip(), target2.strip()), "")
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: python draw_cluster_gates.py <dataset_folder_or_ddPCR_data_root>")
@@ -58,9 +68,9 @@ def main() -> None:
     os.makedirs(flowsom_output_dir, exist_ok=True)
     all_data_csv = os.path.join(flowsom_output_dir, "biorad_cluster_gate_data.csv")
     csv_fields = [
-        "dataset", "well", "source_amplitude_csv", "x_gate", "y_gate",
-        "x_min_ch2", "x_max_ch2", "y_min_ch1", "y_max_ch1", "target_1",
-        "target_2", "cluster_id", "count", "ch1_mean", "ch2_mean",
+        "dataset", "parent_dataset", "well", "source_amplitude_csv", "x_gate", "y_gate",
+        "x_min_ch2", "x_max_ch2", "y_min_ch1", "y_max_ch1", "target1(MUT)",
+        "target2(WT)", "quadrant", "count", "ch1_mean", "ch2_mean",
     ]
 
     with open(all_data_csv, "w", encoding="utf-8", newline="") as all_data_fh:
@@ -172,8 +182,13 @@ def process_dataset(data_dir: str, all_data_writer: csv.DictWriter) -> None:
         if x_gate is None and y_gate is None:
             print(f"Plotting {well} without gate lines: no valid target means found in ClusterData.")
 
+        quadrants = [
+            quadrant_label(str(row["Target 1"]), str(row["Target 2"]))
+            for _, row in well_rows.iterrows()
+        ]
         all_data_writer.writerow({
-            "dataset": dataset_name,
+            "dataset": os.path.splitext(os.path.basename(amp_csv))[0],
+            "parent_dataset": dataset_name,
             "well": well,
             "source_amplitude_csv": os.path.basename(amp_csv),
             "x_gate": x_gate,
@@ -182,9 +197,9 @@ def process_dataset(data_dir: str, all_data_writer: csv.DictWriter) -> None:
             "x_max_ch2": amp_df[ch2_col].max(),
             "y_min_ch1": amp_df[ch1_col].min(),
             "y_max_ch1": amp_df[ch1_col].max(),
-            "target_1": "|".join(well_rows["Target 1"].dropna().astype(str).unique()),
-            "target_2": "|".join(well_rows["Target 2"].dropna().astype(str).unique()),
-            "cluster_id": "|".join(well_rows["Cluster ID"].dropna().astype(str).unique()),
+            "target1(MUT)": "|".join(well_rows["Target 1"].dropna().astype(str).unique()),
+            "target2(WT)": "|".join(well_rows["Target 2"].dropna().astype(str).unique()),
+            "quadrant": "|".join(quadrants),
             "count": "|".join(well_rows["Count"].dropna().astype(str).unique()),
             "ch1_mean": "|".join(well_rows["Ch1 Mean"].dropna().astype(str).unique()),
             "ch2_mean": "|".join(well_rows["Ch2 Mean"].dropna().astype(str).unique()),
