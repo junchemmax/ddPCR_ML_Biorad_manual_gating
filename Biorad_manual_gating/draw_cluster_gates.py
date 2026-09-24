@@ -1,8 +1,8 @@
 import csv
+import argparse
 import glob
 import os
 import re
-import sys
 
 import matplotlib
 matplotlib.use("Agg")
@@ -54,11 +54,16 @@ def quadrant_label(target1: str, target2: str) -> str:
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        print("Usage: python draw_cluster_gates.py <dataset_folder_or_ddPCR_data_root>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Create Bio-Rad gate summaries and diagnostic plots from amplitude and ClusterData CSV files."
+    )
+    parser.add_argument(
+        "dataset_path",
+        help="Dataset folder or ddPCR_data root containing amplitude and ClusterData CSV files.",
+    )
+    args = parser.parse_args()
 
-    root_dir = os.path.abspath(sys.argv[1])
+    root_dir = os.path.abspath(args.dataset_path)
     dataset_dirs = find_dataset_dirs(root_dir)
     if not dataset_dirs:
         print(f"No dataset folders containing amplitude and ClusterData CSVs found in: {root_dir}")

@@ -1,3 +1,4 @@
+import argparse
 import glob
 import os
 import warnings
@@ -103,6 +104,11 @@ def extract_features(data: np.ndarray) -> dict[str, float]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Add amplitude features and gate summaries to biorad_cluster_gate_data.csv."
+    )
+    parser.parse_args()
+
     here = os.path.dirname(os.path.abspath(__file__))
     output_dir = os.path.join(here, "output")
     gate_path = os.path.join(output_dir, "biorad_cluster_gate_data.csv")

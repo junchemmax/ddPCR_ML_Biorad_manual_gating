@@ -1,47 +1,40 @@
-# ddPCR_ML
+# ddPCR_ML_Biorad_manual_gating
 
-Machine-learning-assisted FlowSOM parameter optimization for ddPCR amplitude data.
+Bio-Rad manual quadrant-gating summaries and amplitude-derived features for ddPCR data.
 
 This repository contains:
 - Raw ddPCR datasets organized by assay/batch in `ddPCR_data/`
-- A FlowSOM optimization pipeline in `flowsom/`
-- Scripts to build a meta-dataset, train a predictor, and estimate good FlowSOM parameters for new datasets
-- Tools (this branch) that use each well's Bio-Rad `ClusterData.csv` quadrant-gating export as an
-  objective, low-effort ground truth for cluster count, used to build a much larger training set for
-  the cluster-count classifier
+- Bio-Rad `ClusterData.csv` quadrant-gating exports
+- A canonical pipeline that creates `output/full_biorad_cluster_dataset.csv`
 
 ## Repository Structure
 
+- `Biorad_manual_gating/`
+  - `draw_cluster_gates.py` - reads amplitude and `ClusterData.csv` files and creates gate summaries
+  - `calculate_all_well_features.py` - adds amplitude features and derived gate summaries
+  - `output/` - generated CSVs and reports
 - `ddPCR_data/`
   - `MIP_XXX/`
     - `*_Amplitude.csv` files (per-well amplitude exports)
     - `*_ClusterData.csv` - Bio-Rad QuantaSoft/QX Manager quadrant-gating export (present for most, not all, `MIP_XXX` folders)
-    - `output/` folder for generated results
-- `flowsom/`
-  - `optimize_flowsom_rs_params_single.py` - Optuna + FlowSOM optimization over CSV files in a folder; also appends rows to `output/meta_dataset.csv`
-  - `feature_engineering_diagnostics.ipynb` - notebook for diagnostics/feature exploration
-  - `train_param_predictor.py_` - trains two models from `output/meta_dataset.csv`: a classifier for `N_CLUSTERS` and a regressor for `XDIM`/`YDIM`/`RLEN`
-  - `predict_params.py_` - predicts FlowSOM parameters per well for new data and saves a predicted-cluster scatter PNG per well
-  - `quadrant_predictor_feature_generator.py_` - feature generation and manual quadrant assignment workflow
-  - `compare_cluster_labels.py` - diagnostic: compares manually-entered `best_n_clusters` labels in `meta_dataset.csv` against an objective count derived from each well's `ClusterData.csv`
-  - `build_full_cluster_dataset.py` - builds `output/full_cluster_dataset.csv`, pairing amplitude-derived features for every well that has a `ClusterData.csv` with an objective cluster-count label (no Optuna/FlowSOM run required)
-  - `train_cluster_classifier_full.py` - trains/evaluates a cluster-count classifier on `output/full_cluster_dataset.csv` via cross-validation
-  - `output/` - script-generated artifacts, including `meta_dataset.csv` and `full_cluster_dataset.csv`
+    - `Biorad_manual_gating_output/` - per-dataset generated plots
 - `aws_s3_cmd.txt` - utility command notes
 
-## What the Pipeline Does
+## Bio-Rad Pipeline
 
-1. Reads ddPCR amplitude CSV data (`Ch1Amplitude`, `Ch2Amplitude`).
-2. Runs FlowSOM over a parameter search space:
-   - `XDIM`
-   - `YDIM`
-   - `RLEN`
-   - optionally `n_clusters`
-3. Scores trials with either:
-   - Silhouette score (maximize), or
-   - Davies-Bouldin index (minimize)
-4. Saves per-trial plots and summary outputs.
-5. Allows manual trial override before writing final metadata.
+1. `draw_cluster_gates.py` reads `Ch1Amplitude`, `Ch2Amplitude`, and Bio-Rad `ClusterData.csv` files.
+2. It calculates Ch2 X-axis and Ch1 Y-axis gate positions and assigns quadrants using:
+  - Q1: Ch1 positive, Ch2 positive
+  - Q2: Ch1 positive, Ch2 negative
+  - Q3: Ch1 negative, Ch2 negative
+  - Q4: Ch1 negative, Ch2 positive
+3. `calculate_all_well_features.py` calculates amplitude distribution features and gate summaries.
+4. The final file is saved as `output/full_biorad_cluster_dataset.csv`.
+
+The final dataset contains one row per well. `dataset` identifies the amplitude file,
+`parent_dataset` identifies the experiment, and `well` identifies the plate position.
+`quadrant`, `count`, `ch1_mean`, and `ch2_mean` are pipe-separated lists aligned by position.
+The Ch1 channel represents MUT and Ch2 represents WT.
 
 ## Requirements
 
@@ -52,7 +45,7 @@ Recommended:
 Install dependencies:
 
 ```bash
-pip install optuna scipy anndata flowsom-rs scikit-learn matplotlib pandas joblib
+pip install scipy scikit-learn matplotlib pandas
 ```
 
 If you use the notebook, install Jupyter as needed:
@@ -79,89 +72,89 @@ branch use the droplet-count table only.
 
 ## Quick Start
 
-### 1) Optimize FlowSOM parameters for one dataset folder
+### 1) Generate Bio-Rad gate summaries
 
-Run on a folder containing amplitude CSVs (for example one `MIP_XXX` folder):
-
-```bash
-python flowsom/optimize_flowsom_rs_params_single.py ddPCR_data/MIP_064
-```
-
-Optional arguments:
+Run from the repository root:
 
 ```bash
-python flowsom/optimize_flowsom_rs_params_single.py ddPCR_data/MIP_064 --trials 60 --metric silhouette
-python flowsom/optimize_flowsom_rs_params_single.py ddPCR_data/MIP_064 --trials 50 --metric davies_bouldin --n_clusters 3
+python Biorad_manual_gating/draw_cluster_gates.py ddPCR_data
 ```
 
-Outputs are written under that dataset folder, typically:
-- `output/<csv_stem>/trials/` (trial plots)
-- cluster count summaries
-- optimized scatter plot images
+This creates `Biorad_manual_gating/output/biorad_cluster_gate_data.csv` and per-dataset gate plots.
 
-Note: the optimization script includes an interactive prompt to accept auto-best trial, choose another trial, mark single-cluster, or skip metadata write.
-
-### 2) Build training data and train the parameter predictor
-
-After running optimization across several datasets and building `flowsom/output/meta_dataset.csv`:
+### 2) Build the full feature dataset
 
 ```bash
-python flowsom/train_param_predictor.py_
+python Biorad_manual_gating/calculate_all_well_features.py
 ```
 
-This produces:
-- `flowsom/param_predictor.pkl` - bundles a cluster-count classifier and a grid (XDIM/YDIM/RLEN) regressor
-- `flowsom/param_predictor_report.txt`
+This creates:
 
-### 3) Predict parameters for a new dataset
+```text
+output/full_biorad_cluster_dataset.csv
+```
+
+The output includes the cleaned names `target1(MUT)`, `target2(WT)`, `quadrant`,
+`n_populated_quadrants`, `weighted_mean_ch1_MUT`, `weighted_mean_ch2_WT`,
+`amplitude_range_MUT`, and `amplitude_range_WT`.
+
+### 3) Train an x/y gate prediction model
 
 ```bash
-python flowsom/predict_params.py_ ddPCR_data/MIP_070
+python Biorad_manual_gating/train_gate_model.py
 ```
 
-For each `*_Amplitude.csv` file (well) in the folder, the script prints predicted values for:
-- `N_CLUSTERS`
-- `XDIM`
-- `YDIM`
-- `RLEN`
+The trainer uses numeric amplitude-derived features and excludes manual gate
+labels and gate-derived summaries to prevent target leakage. It holds out
+complete `parent_dataset` groups rather than randomly splitting wells. The
+model predicts `x_gate` (Ch2 axis) and `y_gate` (Ch1 axis) together and compares
+its mean absolute error with a training-set median baseline.
 
-and saves a scatter plot (`<csv_stem>_clusters_pred_....png`) to that dataset's `output/` folder, using FlowSOM run once with the predicted parameters. Use the printed values as warm-start hints before a full Optuna search.
+The following files are written to `output/`:
 
-### 4) (Optional) Build a larger cluster-count dataset from ClusterData.csv
+- `biorad_gate_model.joblib` - fitted scikit-learn model
+- `biorad_gate_model_metrics.json` - held-out metrics and split details
+- `biorad_gate_model_predictions.csv` - held-out wells and predictions
+- `biorad_gate_feature_importance.csv` - random-forest feature importance
 
-`meta_dataset.csv` only has rows for wells that were manually run through the Optuna optimizer, and
-its `best_n_clusters` label was entered by hand during that process. For folders that have a
-`ClusterData.csv`, you can instead derive an objective cluster count directly from the droplet
-counts in each quadrant - no FlowSOM/Optuna run required:
+Optional arguments include `--data-path`, `--output-dir`, `--test-size`, and
+`--random-state`.
+
+To score another feature CSV with the saved model, run:
 
 ```bash
-python flowsom/compare_cluster_labels.py --count-threshold 2
+python Biorad_manual_gating/predict_gate_model.py path/to/features.csv \
+  --model-path output/biorad_gate_model.joblib \
+  --metrics-path output/biorad_gate_model_metrics.json \
+  --output-path output/predicted_gates.csv
 ```
 
-Prints an agreement report between the existing manual `best_n_clusters` labels and the
-`ClusterData.csv`-derived count (a quadrant with at least `--count-threshold` droplets counts as a
-real population). To build a full training set covering every well with a `ClusterData.csv`:
+The scoring CSV must contain the same numeric feature columns used during
+training, but it does not need to contain `x_gate` or `y_gate`.
+
+To draw manual and predicted gates together for the held-out wells, run:
 
 ```bash
-python flowsom/build_full_cluster_dataset.py --count-threshold 2
+python Biorad_manual_gating/plot_manual_vs_predicted_gates.py
 ```
 
-This saves `flowsom/output/full_cluster_dataset.csv` (features + objective `best_n_clusters`, no
-grid params). Evaluate a classifier trained on it with:
-
-```bash
-python flowsom/train_cluster_classifier_full.py
-```
+The plots are saved to `output/manual_vs_predicted_gates/`. Solid lines are
+manual gates and dashed lines are model predictions. Use `--limit 10` to draw
+a small preview set.
 
 ## Typical Workflow
 
-1. Run `optimize_flowsom_rs_params_single.py` on multiple representative `MIP_XXX` folders.
-2. Accumulate metadata/features in `flowsom/output/meta_dataset.csv`.
-3. Train predictor with `train_param_predictor.py_`.
-4. Use `predict_params.py_` for new datasets.
-5. Optionally run full optimization again using predicted values as guidance.
-6. Optionally expand and improve cluster-count labels using `ClusterData.csv` (steps above) for
-   folders where it's available.
+1. Run `draw_cluster_gates.py` on `ddPCR_data/`.
+2. Run `calculate_all_well_features.py` to create the full CSV.
+3. Inspect or model `output/full_biorad_cluster_dataset.csv`.
+
+## S3 Sync
+
+The current `aws_s3_cmd.txt` syncs the two output files used by this workflow:
+
+```bash
+aws s3 sync "C:\Users\HQCHEJUN\Downloads\github_projects\ddPCR_ML_Biorad_manual_gating\output" s3://ddpcr-ml-data/Biorad_manual_gating --exclude "*" --include "full_biorad_cluster_dataset.csv" --include "mut_info.csv"
+```
 
 ## Troubleshooting
 
@@ -169,23 +162,19 @@ python flowsom/train_cluster_classifier_full.py
   - Confirm path points to folder containing amplitude CSV files.
 - Missing columns:
   - Verify CSV contains `Ch1Amplitude` and `Ch2Amplitude`.
-- Poor prediction quality:
-  - Add more diverse training datasets to `flowsom/output/meta_dataset.csv`.
-  - Re-train predictor.
-  - Consider training the cluster-count classifier on `full_cluster_dataset.csv` instead of/alongside
-    `meta_dataset.csv` (see step 4 above) - it is ~39x larger and uses objective labels.
+- Quality concerns:
+  - Add more diverse wells and experiments to the feature dataset.
+  - Check gate placement and quadrant assignments in `ClusterData.csv`.
 - Memory/runtime pressure during optimization:
   - Reduce `--trials`.
   - Set `N_JOBS` to `1` in script if needed.
-- `build_full_cluster_dataset.py` runtime:
-  - Processes every well with a `ClusterData.csv` (~8,700 wells across this dataset) and can take
-    30-50 minutes even with parallelism, since KDE-based peak detection scales with droplet count.
-    Use `--limit N` to test on a small subset first.
+- Large dataset runtime:
+  - Feature extraction processes every well with a `ClusterData.csv` and can take time because KDE-based
+    peak detection scales with droplet count.
 
 ## Notes
 
-- Some scripts currently use a trailing underscore in filename (for example `predict_params.py_`). Keep commands consistent with actual file names in this repository.
-- The notebook is useful for exploratory diagnostics but the main production flow is script-based.
+- The production flow consists of `draw_cluster_gates.py` followed by `calculate_all_well_features.py`.
 - Not every `MIP_XXX` folder has a `ClusterData.csv` (a handful of folders are missing it, and one
   folder is effectively empty/placeholder data).
 
