@@ -132,16 +132,6 @@ python Biorad_manual_gating/predict_gate_model.py path/to/features.csv \
 The scoring CSV must contain the same numeric feature columns used during
 training, but it does not need to contain `x_gate` or `y_gate`.
 
-To draw manual and predicted gates together for the held-out wells, run:
-
-```bash
-python Biorad_manual_gating/plot_manual_vs_predicted_gates.py
-```
-
-The plots are saved to `output/manual_vs_predicted_gates/`. Solid lines are
-manual gates and dashed lines are model predictions. Use `--limit 10` to draw
-a small preview set.
-
 ## Typical Workflow
 
 1. Run `draw_cluster_gates.py` on `ddPCR_data/`.
