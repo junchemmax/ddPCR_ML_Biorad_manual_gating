@@ -1,5 +1,4 @@
 aws s3 sync "C:\Users\HQCHEJUN\Downloads\github_projects\ddPCR_ML\ddPCR_data" s3://ddpcr-ml-data/ddPCR_data
 
-aws s3 sync "C:\Users\HQCHEJUN\Downloads\github_projects\ddPCR_ML\flowsom\output" s3://ddpcr-ml-data/Biorad_cluster --exclude "*" --include "meta_dataset.csv" --include "cluster_label_comparison.csv" --include "full_cluster_dataset.csv"
+aws s3 sync "C:\Users\HQCHEJUN\Downloads\github_projects\ddPCR_ML_Biorad_manual_gating\output" s3://ddpcr-ml-data/Biorad_manual_gating --exclude "*" --include "full_biorad_cluster_dataset.csv" --include "mut_info.csv"
 
-aws s3 cp "C:\Users\HQCHEJUN\Downloads\github_projects\ddPCR_ML\flowsom\output\meta_dataset.csv" s3://ddpcr-ml-data/meta_dataset.csv
