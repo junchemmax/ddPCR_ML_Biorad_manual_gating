@@ -152,11 +152,14 @@ training, but it does not need to contain `x_gate` or `y_gate`.
 
 ## S3 Sync
 
-The current `aws_s3_cmd.txt` syncs the two output files used by this workflow:
+Run these commands from the repository root. The first sync uploads this repository's `ddPCR_data/` folder; the second uploads the four selected output CSVs:
 
 ```bash
-aws s3 sync "C:\Users\HQCHEJUN\Downloads\github_projects\ddPCR_ML_Biorad_manual_gating\output" s3://ddpcr-ml-data/Biorad_manual_gating --exclude "*" --include "full_biorad_cluster_dataset.csv" --include "mut_info.csv"
+aws s3 sync "ddPCR_data" s3://ddpcr-ml-data/ddPCR_data
+aws s3 sync "output" s3://ddpcr-ml-data/Biorad_manual_gating --exclude "*" --include "biorad_cluster_gate_data.csv" --include "full_biorad_cluster_dataset.csv" --include "mut_info.csv" --include "wells_with_missing_gates.csv"
 ```
+
+Use the `ddPCR_data` folder in this repository. The older `...\github_projects\ddPCR_ML\ddPCR_data` path points to a different project and does not exist in this workspace.
 
 ## Troubleshooting
 
