@@ -10,25 +10,24 @@ This repository contains:
 ## Repository Structure
 
 - `Biorad_manual_gating/`
-  - `draw_cluster_gates.py` - reads amplitude and `ClusterData.csv` files and creates gate summaries
-  - `calculate_all_well_features.py` - adds amplitude features and derived gate summaries
-  - `output/` - generated CSVs and reports
+  - `build_biorad_gate_dataset.py` - reads amplitude and `ClusterData.csv` files, creates gate summaries and plots, and builds the feature dataset
 - `ddPCR_data/`
   - `MIP_XXX/`
     - `*_Amplitude.csv` files (per-well amplitude exports)
     - `*_ClusterData.csv` - Bio-Rad QuantaSoft/QX Manager quadrant-gating export (present for most, not all, `MIP_XXX` folders)
     - `Biorad_manual_gating_output/` - per-dataset generated plots
+  - `output/` - generated dataset, gate summaries, and reports
 - `aws_s3_cmd.txt` - utility command notes
 
 ## Bio-Rad Pipeline
 
-1. `draw_cluster_gates.py` reads `Ch1Amplitude`, `Ch2Amplitude`, and Bio-Rad `ClusterData.csv` files.
+1. `build_biorad_gate_dataset.py` reads `Ch1Amplitude`, `Ch2Amplitude`, and Bio-Rad `ClusterData.csv` files.
 2. It calculates Ch2 X-axis and Ch1 Y-axis gate positions and assigns quadrants using:
   - Q1: Ch1 positive, Ch2 positive
   - Q2: Ch1 positive, Ch2 negative
   - Q3: Ch1 negative, Ch2 negative
   - Q4: Ch1 negative, Ch2 positive
-3. `calculate_all_well_features.py` calculates amplitude distribution features and gate summaries.
+3. The script calculates amplitude distribution features and gate summaries in the same per-well pass.
 4. The final file is saved as `output/full_biorad_cluster_dataset.csv`.
 
 The final dataset contains one row per well. `dataset` identifies the amplitude file,
@@ -72,33 +71,47 @@ branch use the droplet-count table only.
 
 ## Quick Start
 
-### 1) Generate Bio-Rad gate summaries
+### 1) Generate gates, plots, and the full feature dataset
 
 Run from the repository root:
 
 ```bash
-python Biorad_manual_gating/draw_cluster_gates.py ddPCR_data
+python Biorad_manual_gating/build_biorad_gate_dataset.py ddPCR_data
 ```
 
-This creates `Biorad_manual_gating/output/biorad_cluster_gate_data.csv` and per-dataset gate plots.
-
-### 2) Build the full feature dataset
-
-```bash
-python Biorad_manual_gating/calculate_all_well_features.py
-```
-
-This creates:
+This creates the gate-summary CSV, per-dataset gate plots, and:
 
 ```text
+output/biorad_cluster_gate_data.csv
 output/full_biorad_cluster_dataset.csv
+output/wells_with_missing_gates.csv
+output/precheck_missing_gate_data.csv
+```
+
+Both gate reports include wells without usable amplitude observations. They are marked `not_processed` with a reason; processable wells with unavailable gate axes are also included and marked separately. The full feature dataset contains only wells with usable amplitude observations.
+Folders containing amplitude CSVs but no `ClusterData.csv` are also processed as ungated wells; no plots are generated for those folders.
+
+The script runs a gate-data precheck before feature extraction and plotting. It excludes amplitude files with no complete Ch1/Ch2 observations, since those files are skipped during processing. To run only the precheck, without processing wells, use:
+
+```bash
+python Biorad_manual_gating/build_biorad_gate_dataset.py ddPCR_data --precheck-only
+```
+
+The precheck treats an axis as estimable when its target has only one observed polarity. The script places that gate just outside the observed amplitude range to keep the observed droplets in the assigned class. This also handles multi-quadrant wells such as Q1+Q4, where Target 2 is positive in both quadrants. Axes without enough target information to estimate remain blank and are listed in the missing-coordinate report.
+
+These are containment estimates rather than biologically inferred thresholds; the dataset marks them as `single_observed_class_amplitude_bound` in `x_gate_method` or `y_gate_method`.
+
+Rerunning the command updates the existing dataset: wells already present are retained, and only new wells are processed. To recalculate every well, run:
+
+```bash
+python Biorad_manual_gating/build_biorad_gate_dataset.py ddPCR_data --rebuild
 ```
 
 The output includes the cleaned names `target1(MUT)`, `target2(WT)`, `quadrant`,
 `n_populated_quadrants`, `weighted_mean_ch1_MUT`, `weighted_mean_ch2_WT`,
 `amplitude_range_MUT`, and `amplitude_range_WT`.
 
-### 3) Train an x/y gate prediction model
+### 2) Train an x/y gate prediction model
 
 ```bash
 python Biorad_manual_gating/train_gate_model.py
@@ -134,9 +147,8 @@ training, but it does not need to contain `x_gate` or `y_gate`.
 
 ## Typical Workflow
 
-1. Run `draw_cluster_gates.py` on `ddPCR_data/`.
-2. Run `calculate_all_well_features.py` to create the full CSV.
-3. Inspect or model `output/full_biorad_cluster_dataset.csv`.
+1. Run `build_biorad_gate_dataset.py` on `ddPCR_data/` to create the full dataset.
+2. Inspect or model `output/full_biorad_cluster_dataset.csv`.
 
 ## S3 Sync
 
@@ -164,7 +176,7 @@ aws s3 sync "C:\Users\HQCHEJUN\Downloads\github_projects\ddPCR_ML_Biorad_manual_
 
 ## Notes
 
-- The production flow consists of `draw_cluster_gates.py` followed by `calculate_all_well_features.py`.
+- `build_biorad_gate_dataset.py` generates gate summaries, plots, and the full feature dataset in one run.
 - Not every `MIP_XXX` folder has a `ClusterData.csv` (a handful of folders are missing it, and one
   folder is effectively empty/placeholder data).
 
