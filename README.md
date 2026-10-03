@@ -113,34 +113,35 @@ The output includes the cleaned names `target1(MUT)`, `target2(WT)`, `quadrant`,
 
 ### 2) Train an x/y gate prediction model
 
-```bash
-python Biorad_manual_gating/train_gate_model.py
-```
+For an interactive training and prediction workflow, open
+[`Biorad_manual_gating/train_and_predict_gate_model.ipynb`](Biorad_manual_gating/train_and_predict_gate_model.ipynb),
+select the `learn_python` kernel, and run the cells in order. Edit the paths and
+split settings in the first two code cells to use different inputs. The notebook
+saves execution results and writes all-well predictions to
+`model_output/biorad_gate_predictions_all_wells.csv` in addition to the artifacts below.
+Training and inference default to `data_output/full_biorad_cluster_dataset.csv`;
+model artifacts are saved under `model_output/`.
+All-well predictions include training wells; use the grouped held-out metrics for
+evaluation. Reference gates include amplitude-bound estimates, not just
+ClusterData-mean midpoints, and are not original saved manual gate coordinates.
 
-The trainer uses numeric amplitude-derived features and excludes manual gate
+The notebook uses numeric amplitude-derived features and excludes manual gate
 labels and gate-derived summaries to prevent target leakage. It holds out
 complete `parent_dataset` groups rather than randomly splitting wells. The
 model predicts `x_gate` (Ch2 axis) and `y_gate` (Ch1 axis) together and compares
 its mean absolute error with a training-set median baseline.
 
-The following files are written to `output/`:
+The following model files are written to `model_output/`:
 
 - `biorad_gate_model.joblib` - fitted scikit-learn model
 - `biorad_gate_model_metrics.json` - held-out metrics and split details
 - `biorad_gate_model_predictions.csv` - held-out wells and predictions
 - `biorad_gate_feature_importance.csv` - random-forest feature importance
 
-Optional arguments include `--data-path`, `--output-dir`, `--test-size`, and
-`--random-state`.
-
-To score another feature CSV with the saved model, run:
-
-```bash
-python Biorad_manual_gating/predict_gate_model.py path/to/features.csv \
-  --model-path output/biorad_gate_model.joblib \
-  --metrics-path output/biorad_gate_model_metrics.json \
-  --output-path output/predicted_gates.csv
-```
+Configure `DATA_PATH`, `OUTPUT_DIR`, `TEST_SIZE`, and `RANDOM_STATE` in the notebook.
+To score another feature CSV with the saved model, set `INFERENCE_DATA_PATH` and
+`PREDICTION_OUTPUT_PATH`, then run the inference cells after the path configuration
+and imports. Retraining is not required for inference with existing artifacts.
 
 The scoring CSV must contain the same numeric feature columns used during
 training, but it does not need to contain `x_gate` or `y_gate`.
