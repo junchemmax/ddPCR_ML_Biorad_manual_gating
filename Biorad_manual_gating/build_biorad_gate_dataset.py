@@ -397,6 +397,11 @@ def main() -> None:
         help="Reprocess all wells instead of updating the existing dataset.",
     )
     parser.add_argument(
+        "--refresh-existing",
+        action="store_true",
+        help="Replace existing rows for the supplied dataset folders while retaining all other datasets.",
+    )
+    parser.add_argument(
         "--precheck-only",
         action="store_true",
         help="Report amplitude files without complete gate data, then exit without processing.",
@@ -411,7 +416,7 @@ def main() -> None:
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_dir = os.path.dirname(script_dir)
-    project_output_dir = os.path.join(project_dir, "output")
+    project_output_dir = os.path.join(project_dir, "data_output")
     gate_output_dir = project_output_dir
     os.makedirs(project_output_dir, exist_ok=True)
     all_data_csv = os.path.join(gate_output_dir, "biorad_cluster_gate_data.csv")
@@ -419,6 +424,14 @@ def main() -> None:
     precheck_path = os.path.join(project_output_dir, "precheck_missing_gate_data.csv")
     precheck_rows, skipped_rows = precheck_gate_data(dataset_dirs)
     precheck_report_rows = precheck_rows + skipped_rows
+    scoped_parents = {os.path.basename(os.path.abspath(data_dir)) for data_dir in dataset_dirs}
+    if not args.rebuild and os.path.exists(precheck_path):
+        previous_precheck = pd.read_csv(precheck_path)
+        if "parent_dataset" in previous_precheck.columns:
+            retained_precheck = previous_precheck[
+                ~previous_precheck["parent_dataset"].astype(str).isin(scoped_parents)
+            ].to_dict(orient="records")
+            precheck_report_rows = retained_precheck + precheck_report_rows
     precheck_columns = [
         "dataset", "parent_dataset", "well", "source_amplitude_csv",
         "missing_x_gate", "missing_y_gate", "processing_status", "reason",
@@ -481,6 +494,8 @@ def main() -> None:
                 existing_dataset["dataset"].astype(str),
             )
         )
+        if args.refresh_existing:
+            processed_keys.clear()
         existing_gate_rows = existing_dataset[
             [column for column in csv_fields if column != "source_amplitude_csv"]
         ].to_dict(orient="records")
@@ -511,6 +526,22 @@ def main() -> None:
             "gate_ch1_range": "amplitude_range_MUT",
             "gate_ch2_range": "amplitude_range_WT",
         })
+        if args.refresh_existing and existing_dataset is not None:
+            refreshed_keys = set(
+                zip(
+                    new_rows["parent_dataset"].astype(str),
+                    new_rows["dataset"].astype(str),
+                )
+            )
+            existing_keys = list(
+                zip(
+                    existing_dataset["parent_dataset"].astype(str),
+                    existing_dataset["dataset"].astype(str),
+                )
+            )
+            existing_dataset = existing_dataset.loc[
+                [key not in refreshed_keys for key in existing_keys]
+            ].copy()
         merged = (
             pd.concat([existing_dataset, new_rows], ignore_index=True, sort=False)
             if existing_dataset is not None
@@ -522,15 +553,29 @@ def main() -> None:
             raise ValueError("No new or previously processed wells are available.")
 
     merged.to_csv(output_path, index=False)
+    new_gate_rows = gate_rows[-len(feature_rows):] if feature_rows else []
+    if args.refresh_existing and new_gate_rows:
+        refreshed_keys = {
+            (str(row["parent_dataset"]), str(row["dataset"]))
+            for row in new_gate_rows
+        }
+        gate_rows = [
+            row for row in gate_rows
+            if (str(row["parent_dataset"]), str(row["dataset"])) not in refreshed_keys
+        ] + new_gate_rows
     with open(all_data_csv, "w", encoding="utf-8", newline="") as all_data_fh:
         all_data_writer = csv.DictWriter(all_data_fh, fieldnames=csv_fields)
         all_data_writer.writeheader()
         all_data_writer.writerows(gate_rows)
 
+    all_skipped_rows = [
+        row for row in precheck_report_rows
+        if row.get("processing_status") == "not_processed"
+    ]
     missing_gate_path, missing_gate_count, no_gate_count = write_missing_gate_report(
         merged,
         project_output_dir,
-        skipped_rows,
+        all_skipped_rows,
     )
     print(f"New wells processed: {len(feature_rows)}")
     print(f"Previously processed wells retained: {len(existing_dataset) if existing_dataset is not None else 0}")

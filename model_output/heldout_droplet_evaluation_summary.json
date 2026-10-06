@@ -1,0 +1,17 @@
+{
+  "evaluated_wells": 1818,
+  "failed_wells": 0,
+  "evaluated_droplets": 27755560,
+  "pooled_quadrant_agreement_pct": 95.96056069486619,
+  "median_well_quadrant_agreement_pct": 99.85083334378174,
+  "p10_well_quadrant_agreement_pct": 91.87291913765714,
+  "wells_at_least_99pct_agreement": 1278,
+  "mean_abs_MUT_positive_shift_pp": 2.0010061779875716,
+  "p95_abs_MUT_positive_shift_pp": 1.82401217572723,
+  "max_abs_MUT_positive_shift_pp": 99.9568717653824,
+  "MUT_wells_unbounded_occupancy": 0,
+  "mean_abs_WT_positive_shift_pp": 2.2771207807436715,
+  "p95_abs_WT_positive_shift_pp": 10.380657484411998,
+  "max_abs_WT_positive_shift_pp": 100.0,
+  "WT_wells_unbounded_occupancy": 77
+}

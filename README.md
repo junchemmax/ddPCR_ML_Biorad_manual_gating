@@ -5,7 +5,7 @@ Bio-Rad manual quadrant-gating summaries and amplitude-derived features for ddPC
 This repository contains:
 - Raw ddPCR datasets organized by assay/batch in `ddPCR_data/`
 - Bio-Rad `ClusterData.csv` quadrant-gating exports
-- A canonical pipeline that creates `output/full_biorad_cluster_dataset.csv`
+- A canonical pipeline that creates `data_output/full_biorad_cluster_dataset.csv`
 
 ## Repository Structure
 
@@ -16,7 +16,7 @@ This repository contains:
     - `*_Amplitude.csv` files (per-well amplitude exports)
     - `*_ClusterData.csv` - Bio-Rad QuantaSoft/QX Manager quadrant-gating export (present for most, not all, `MIP_XXX` folders)
     - `Biorad_manual_gating_output/` - per-dataset generated plots
-  - `output/` - generated dataset, gate summaries, and reports
+- `data_output/` - generated dataset, gate summaries, and reports
 - `aws_s3_cmd.txt` - utility command notes
 
 ## Bio-Rad Pipeline
@@ -28,7 +28,7 @@ This repository contains:
   - Q3: Ch1 negative, Ch2 negative
   - Q4: Ch1 negative, Ch2 positive
 3. The script calculates amplitude distribution features and gate summaries in the same per-well pass.
-4. The final file is saved as `output/full_biorad_cluster_dataset.csv`.
+4. The final file is saved as `data_output/full_biorad_cluster_dataset.csv`.
 
 The final dataset contains one row per well. `dataset` identifies the amplitude file,
 `parent_dataset` identifies the experiment, and `well` identifies the plate position.
@@ -82,10 +82,10 @@ python Biorad_manual_gating/build_biorad_gate_dataset.py ddPCR_data
 This creates the gate-summary CSV, per-dataset gate plots, and:
 
 ```text
-output/biorad_cluster_gate_data.csv
-output/full_biorad_cluster_dataset.csv
-output/wells_with_missing_gates.csv
-output/precheck_missing_gate_data.csv
+data_output/biorad_cluster_gate_data.csv
+data_output/full_biorad_cluster_dataset.csv
+data_output/wells_with_missing_gates.csv
+data_output/precheck_missing_gate_data.csv
 ```
 
 Both gate reports include wells without usable amplitude observations. They are marked `not_processed` with a reason; processable wells with unavailable gate axes are also included and marked separately. The full feature dataset contains only wells with usable amplitude observations.
@@ -105,6 +105,12 @@ Rerunning the command updates the existing dataset: wells already present are re
 
 ```bash
 python Biorad_manual_gating/build_biorad_gate_dataset.py ddPCR_data --rebuild
+```
+
+When ClusterData changes for an existing experiment, refresh only that experiment's rows and plots while retaining all other projects:
+
+```powershell
+python .\Biorad_manual_gating\build_biorad_gate_dataset.py .\ddPCR_data\MIP_043\210802_MIP-043_TRT63_TA171 --refresh-existing
 ```
 
 The output includes the cleaned names `target1(MUT)`, `target2(WT)`, `quadrant`,
@@ -146,10 +152,28 @@ and imports. Retraining is not required for inference with existing artifacts.
 The scoring CSV must contain the same numeric feature columns used during
 training, but it does not need to contain `x_gate` or `y_gate`.
 
+### 3) Evaluate Droplet Classification
+
+The final notebook section compares reference and predicted quadrant assignments
+on raw amplitudes for held-out wells only. It can run with the notebook's import
+and path configuration cells without retraining. Reports are saved in `model_output/`:
+
+- `heldout_droplet_comparison.csv` - per-well quadrant counts, agreement, MUT/WT-positive shifts, and Poisson occupancy changes
+- `heldout_experiment_comparison.csv` - per-experiment agreement and target-fraction shifts
+- `heldout_quadrant_confusion.csv` - pooled reference-versus-predicted quadrant counts
+- `heldout_droplet_evaluation_failures.csv` - files that could not be evaluated
+- `heldout_droplet_evaluation_summary.json` - overall evaluation statistics
+
+Reference assignments use reconstructed gates, not original Bio-Rad per-droplet
+labels. Positive-fraction shifts are in percentage points. Poisson occupancy is
+copies per droplet, not concentration; all-positive wells have unbounded
+occupancy and are excluded from finite occupancy comparisons. No biological
+acceptance threshold is assumed.
+
 ## Typical Workflow
 
 1. Run `build_biorad_gate_dataset.py` on `ddPCR_data/` to create the full dataset.
-2. Inspect or model `output/full_biorad_cluster_dataset.csv`.
+2. Inspect or model `data_output/full_biorad_cluster_dataset.csv`.
 
 ## S3 Sync
 
@@ -157,7 +181,7 @@ Run these commands from the repository root. The first sync uploads this reposit
 
 ```bash
 aws s3 sync "ddPCR_data" s3://ddpcr-ml-data/ddPCR_data
-aws s3 sync "output" s3://ddpcr-ml-data/Biorad_manual_gating --exclude "*" --include "biorad_cluster_gate_data.csv" --include "full_biorad_cluster_dataset.csv" --include "mut_info.csv" --include "wells_with_missing_gates.csv"
+aws s3 sync "data_output" s3://ddpcr-ml-data/Biorad_manual_gating --exclude "*" --include "biorad_cluster_gate_data.csv" --include "full_biorad_cluster_dataset.csv" --include "mut_info.csv" --include "wells_with_missing_gates.csv"
 ```
 
 Use the `ddPCR_data` folder in this repository. The older `...\github_projects\ddPCR_ML\ddPCR_data` path points to a different project and does not exist in this workspace.
