@@ -1,5 +1,5 @@
 {
-  "data_path": "C:\\Users\\HQCHEJUN\\Downloads\\github_projects\\ddPCR_ML_Biorad_manual_gating\\output\\full_biorad_cluster_dataset.csv",
+  "data_path": "C:\\Users\\HQCHEJUN\\Downloads\\github_projects\\ddPCR_ML_Biorad_manual_gating\\data_output\\full_biorad_cluster_dataset.csv",
   "feature_columns": [
     "x_min_ch2",
     "x_max_ch2",
@@ -39,10 +39,10 @@
   "test_rows": 1818,
   "train_groups": 73,
   "test_groups": 19,
-  "model_mae_x_gate": 356.79500668933247,
-  "model_rmse_x_gate": 695.8542359199388,
-  "baseline_mae_x_gate": 803.3754478122192,
-  "model_mae_y_gate": 335.52740263564255,
-  "model_rmse_y_gate": 504.32490499152766,
-  "baseline_mae_y_gate": 1441.4921638234844
+  "model_mae_x_gate": 356.69939559163413,
+  "model_rmse_x_gate": 695.742372889316,
+  "baseline_mae_x_gate": 803.2719670473588,
+  "model_mae_y_gate": 334.4173000666457,
+  "model_rmse_y_gate": 504.65645099716755,
+  "baseline_mae_y_gate": 1458.04690220224
 }
