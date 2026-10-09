@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
-from scipy.stats import gaussian_kde, kurtosis, skew
+from scipy.stats import kurtosis, skew
 
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -105,12 +105,12 @@ def kde_peak_count(values: np.ndarray) -> int:
     if len(values) < 3 or np.ptp(values) == 0:
         return 1
     try:
-        density = gaussian_kde(values, bw_method=0.15)(
-            np.linspace(values.min(), values.max(), 500)
-        )
-        peaks, _ = find_peaks(density, prominence=density.max() * 0.05)
-        return int(len(peaks))
-    except (np.linalg.LinAlgError, ValueError):
+        counts, _ = np.histogram(values, bins=128)
+        if counts.max() == 0:
+            return 1
+        peaks, _ = find_peaks(counts, prominence=counts.max() * 0.05)
+        return max(1, int(len(peaks)))
+    except ValueError:
         return 1
 
 
@@ -280,6 +280,148 @@ def estimate_single_class_gates(
     return x_gate, y_gate
 
 
+def manual_label_columns(amplitude_df: pd.DataFrame) -> list[str]:
+    amplitude_cols = {"Ch1Amplitude", "Ch2Amplitude"}
+    label_cols = []
+    for column in amplitude_df.columns:
+        column_name = str(column)
+        if column_name in amplitude_cols:
+            continue
+        if column_name.startswith("Unnamed"):
+            continue
+        if "Ch1" in column_name or "Ch2" in column_name:
+            continue
+        label_cols.append(column)
+    return label_cols[:2]
+
+
+def normalize_manual_label(value: object) -> str:
+    if pd.isna(value):
+        return ""
+    label = str(value).strip().lower()
+    if label in {"0", "0.0"}:
+        return "0"
+    if label in {"1", "1.0"}:
+        return "1"
+    if label == "u":
+        return "u"
+    return ""
+
+
+def manual_axis_gate(values: np.ndarray, labels: pd.Series) -> tuple[float | None, str]:
+    normalized = labels.map(normalize_manual_label).to_numpy()
+    finite_mask = np.isfinite(values)
+    valid_mask = finite_mask & np.isin(normalized, ["0", "1"])
+    if not valid_mask.any():
+        return None, "manual_labels_unavailable"
+
+    axis_values = values[valid_mask]
+    axis_labels = normalized[valid_mask]
+    states = set(axis_labels)
+    if states == {"1"}:
+        return float(np.nextafter(np.min(axis_values), -np.inf)), "manual_single_positive_amplitude_bound"
+    if states == {"0"}:
+        return float(np.nextafter(np.max(axis_values), np.inf)), "manual_single_negative_amplitude_bound"
+
+    neg_values = axis_values[axis_labels == "0"]
+    pos_values = axis_values[axis_labels == "1"]
+    max_neg = float(np.max(neg_values))
+    min_pos = float(np.min(pos_values))
+    if max_neg <= min_pos:
+        return 0.5 * (max_neg + min_pos), "manual_class_boundary"
+
+    unique_values = np.unique(axis_values)
+    if len(unique_values) == 1:
+        return float(unique_values[0]), "manual_class_optimized_threshold"
+    order = np.argsort(axis_values)
+    sorted_values = axis_values[order]
+    sorted_is_positive = axis_labels[order] == "1"
+    cumulative_pos = np.cumsum(sorted_is_positive)
+    total_pos = int(np.sum(sorted_is_positive))
+    total_neg = len(sorted_is_positive) - total_pos
+    change_indices = np.where(sorted_values[:-1] != sorted_values[1:])[0]
+    pos_left = cumulative_pos[change_indices]
+    neg_left = (change_indices + 1) - pos_left
+    neg_right = total_neg - neg_left
+    middle_thresholds = (sorted_values[change_indices] + sorted_values[change_indices + 1]) / 2
+    thresholds = np.concatenate(
+        [
+            [np.nextafter(sorted_values[0], -np.inf)],
+            middle_thresholds,
+            [np.nextafter(sorted_values[-1], np.inf)],
+        ]
+    )
+    errors = np.concatenate([[total_neg], pos_left + neg_right, [total_pos]])
+    best_index = int(np.argmin(errors))
+    return float(thresholds[best_index]), "manual_class_optimized_threshold"
+
+
+def manual_gate_positions(
+    amplitude_df: pd.DataFrame,
+    ch1_col: str,
+    ch2_col: str,
+) -> tuple[float | None, float | None, str, str, list[str]]:
+    label_cols = manual_label_columns(amplitude_df)
+    if len(label_cols) < 2:
+        return None, None, "manual_label_columns_missing", "manual_label_columns_missing", label_cols
+
+    y_gate, y_method = manual_axis_gate(
+        amplitude_df[ch1_col].to_numpy(dtype=float),
+        amplitude_df[label_cols[0]],
+    )
+    x_gate, x_method = manual_axis_gate(
+        amplitude_df[ch2_col].to_numpy(dtype=float),
+        amplitude_df[label_cols[1]],
+    )
+    return x_gate, y_gate, x_method, y_method, label_cols
+
+
+def summarize_manual_labels(
+    amplitude_df: pd.DataFrame,
+    ch1_col: str,
+    ch2_col: str,
+    label_cols: list[str],
+) -> dict[str, object]:
+    if len(label_cols) < 2:
+        return {
+            "target1": "",
+            "target2": "",
+            "quadrant": "",
+            "count": "",
+            "ch1_mean": "",
+            "ch2_mean": "",
+            "summary_rows": [],
+        }
+
+    summary_df = amplitude_df[[ch1_col, ch2_col, label_cols[0], label_cols[1]]].copy()
+    summary_df["target1"] = summary_df[label_cols[0]].map(normalize_manual_label)
+    summary_df["target2"] = summary_df[label_cols[1]].map(normalize_manual_label)
+    summary_df = summary_df[summary_df["target1"].isin(["0", "1"]) & summary_df["target2"].isin(["0", "1"])]
+    order = {"0": 0, "1": 1}
+    rows = []
+    for (target1, target2), group in summary_df.groupby(["target1", "target2"], sort=False):
+        rows.append({
+            "target1": target1,
+            "target2": target2,
+            "quadrant": quadrant_label(target1, target2),
+            "count": int(len(group)),
+            "ch1_mean": float(group[ch1_col].mean()),
+            "ch2_mean": float(group[ch2_col].mean()),
+        })
+    rows.sort(key=lambda row: (order[row["target1"]], order[row["target2"]]))
+    target1_values = sorted(set(summary_df["target1"]), key=lambda value: order[value])
+    target2_values = sorted(set(summary_df["target2"]), key=lambda value: order[value])
+    return {
+        "target1": "|".join(target1_values),
+        "target2": "|".join(target2_values),
+        "quadrant": "|".join(row["quadrant"] for row in rows),
+        "count": "|".join(str(row["count"]) for row in rows),
+        "ch1_mean": "|".join(str(row["ch1_mean"]) for row in rows),
+        "ch2_mean": "|".join(str(row["ch2_mean"]) for row in rows),
+        "summary_rows": rows,
+    }
+
+
 def has_usable_amplitude_points(amplitude_path: str) -> bool:
     try:
         chunks = pd.read_csv(
@@ -300,19 +442,56 @@ def has_usable_amplitude_points(amplitude_path: str) -> bool:
     return False
 
 
+def precheck_manual_gate_availability(amplitude_path: str) -> tuple[bool, bool, bool, list[str]]:
+    has_points = False
+    label_cols: list[str] = []
+    target1_states: set[str] = set()
+    target2_states: set[str] = set()
+    try:
+        chunks = pd.read_csv(
+            amplitude_path,
+            skiprows=3,
+            chunksize=1000,
+            low_memory=False,
+        )
+        for chunk in chunks:
+            ch1_col = next((column for column in chunk.columns if "Ch1" in str(column)), None)
+            ch2_col = next((column for column in chunk.columns if "Ch2" in str(column)), None)
+            if ch1_col is None or ch2_col is None:
+                return False, False, False, []
+            if not chunk[[ch1_col, ch2_col]].dropna().empty:
+                has_points = True
+            if not label_cols:
+                label_cols = manual_label_columns(chunk)
+            if len(label_cols) >= 2:
+                target1_states.update(
+                    label for label in chunk[label_cols[0]].map(normalize_manual_label).unique()
+                    if label in {"0", "1"}
+                )
+                target2_states.update(
+                    label for label in chunk[label_cols[1]].map(normalize_manual_label).unique()
+                    if label in {"0", "1"}
+                )
+            if has_points and target1_states and target2_states:
+                break
+    except pd.errors.EmptyDataError:
+        return False, False, False, []
+    return has_points, bool(target2_states), bool(target1_states), label_cols
+
+
 def precheck_gate_data(
     dataset_dirs: list[str],
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     missing_rows = []
     skipped_rows = []
     for data_dir in dataset_dirs:
-        cluster_csv, cluster_df = read_cluster_data(data_dir)
         parent_dataset = os.path.basename(os.path.abspath(data_dir))
         amplitude_csvs = sorted(glob.glob(os.path.join(data_dir, "*_Amplitude.csv")))
         for amp_csv in amplitude_csvs:
             dataset = os.path.splitext(os.path.basename(amp_csv))[0]
             well = parse_well_name(amp_csv)
-            if not has_usable_amplitude_points(amp_csv):
+            has_points, x_estimate_available, y_estimate_available, label_cols = precheck_manual_gate_availability(amp_csv)
+            if not has_points:
                 skipped_rows.append({
                     "dataset": dataset,
                     "parent_dataset": parent_dataset,
@@ -325,30 +504,16 @@ def precheck_gate_data(
                 })
                 continue
 
-            well_rows = cluster_df[cluster_df["Well"] == well].copy()
-            if cluster_csv is None or well_rows.empty:
-                x_gate, y_gate = None, None
-                x_estimate_available, y_estimate_available = False, False
-            else:
-                x_gate, y_gate = gate_positions(well_rows)
-                target1_states = set(well_rows["Target 1"].astype(str).str.strip()) & {"0", "0.0", "1", "1.0"}
-                target2_states = set(well_rows["Target 2"].astype(str).str.strip()) & {"0", "0.0", "1", "1.0"}
-                x_estimate_available = x_gate is not None or len(target2_states) == 1
-                y_estimate_available = y_gate is not None or len(target1_states) == 1
-
             if x_estimate_available and y_estimate_available:
                 continue
 
             reasons = []
-            if cluster_csv is None:
-                reasons.append("ClusterData file missing")
-            elif well_rows.empty:
-                reasons.append("No matching well row in ClusterData")
-            else:
-                if not x_estimate_available:
-                    reasons.append("Missing Target 2 positive/negative means for x gate")
-                if not y_estimate_available:
-                    reasons.append("Missing Target 1 positive/negative means for y gate")
+            if len(label_cols) < 2:
+                reasons.append("Manual amplitude classification columns missing")
+            if not x_estimate_available:
+                reasons.append("Missing usable manual Target 2 labels for x gate")
+            if not y_estimate_available:
+                reasons.append("Missing usable manual Target 1 labels for y gate")
             missing_rows.append({
                 "dataset": dataset,
                 "parent_dataset": parent_dataset,
@@ -405,6 +570,11 @@ def main() -> None:
         "--precheck-only",
         action="store_true",
         help="Report amplitude files without complete gate data, then exit without processing.",
+    )
+    parser.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="Build CSV outputs without regenerating per-well diagnostic PNG plots.",
     )
     args = parser.parse_args()
 
@@ -504,8 +674,9 @@ def main() -> None:
         gate_rows.extend(existing_gate_rows)
         print(f"Loaded existing wells: {len(existing_dataset)}")
 
-    for data_dir in dataset_dirs:
-        process_dataset(data_dir, gate_rows, feature_rows, processed_keys)
+    for index, data_dir in enumerate(dataset_dirs, start=1):
+        print(f"Processing dataset folder {index}/{len(dataset_dirs)}: {data_dir}", flush=True)
+        process_dataset(data_dir, gate_rows, feature_rows, processed_keys, skip_plots=args.no_plots)
 
     if not gate_rows:
         raise ValueError("No wells with readable amplitude data were found.")
@@ -596,18 +767,16 @@ def process_dataset(
     gate_rows: list[dict[str, object]],
     feature_rows: list[dict[str, object]],
     processed_keys: set[tuple[str, str]],
+    skip_plots: bool = False,
 ) -> None:
-    cluster_csv, cluster_df = read_cluster_data(data_dir)
-    if cluster_csv is None:
-        print(f"No *_ClusterData.csv found in {data_dir}; recording wells without gates.")
-
     amplitude_csvs = sorted(glob.glob(os.path.join(data_dir, "*_Amplitude.csv")))
     if not amplitude_csvs:
         print(f"No *_Amplitude.csv files found in: {data_dir}")
         sys.exit(1)
 
     out_dir = mip_output_dir(data_dir)
-    os.makedirs(out_dir, exist_ok=True)
+    if not skip_plots:
+        os.makedirs(out_dir, exist_ok=True)
 
     dataset_name = os.path.basename(os.path.abspath(data_dir))
 
@@ -617,10 +786,6 @@ def process_dataset(
             continue
 
         well = parse_well_name(amp_csv)
-        well_rows = cluster_df[cluster_df["Well"] == well].copy()
-        if well_rows.empty and cluster_csv is not None:
-            print(f"No ClusterData rows for well {well} in {cluster_csv}; recording without gates.")
-
         amp_df = pd.read_csv(amp_csv, skiprows=3, low_memory=False)
         ch1_col = next((c for c in amp_df.columns if "Ch1" in str(c)), None)
         ch2_col = next((c for c in amp_df.columns if "Ch2" in str(c)), None)
@@ -628,34 +793,17 @@ def process_dataset(
             print(f"Skipping {amp_csv}: amplitude columns not found.")
             continue
 
-        amp_df = amp_df[[ch1_col, ch2_col]].dropna().copy()
+        label_cols = manual_label_columns(amp_df)
+        retained_cols = [ch1_col, ch2_col] + label_cols
+        amp_df = amp_df[retained_cols].dropna(subset=[ch1_col, ch2_col]).copy()
         if amp_df.empty:
             print(f"Skipping {amp_csv}: no amplitude points available.")
             continue
 
-        x_gate, y_gate = gate_positions(well_rows)
-        x_gate_method = "cluster_means" if x_gate is not None else "unavailable"
-        y_gate_method = "cluster_means" if y_gate is not None else "unavailable"
-        if x_gate is None or y_gate is None:
-            estimated_x, estimated_y = estimate_single_class_gates(
-                well_rows,
-                amp_df[ch1_col].to_numpy(dtype=float),
-                amp_df[ch2_col].to_numpy(dtype=float),
-            )
-            if x_gate is None and estimated_x is not None:
-                x_gate = estimated_x
-                x_gate_method = "single_observed_class_amplitude_bound"
-            if y_gate is None and estimated_y is not None:
-                y_gate = estimated_y
-                y_gate_method = "single_observed_class_amplitude_bound"
-
-        if x_gate is None and y_gate is None and cluster_csv is not None:
-            print(f"Plotting {well} without gate lines: no valid target means found in ClusterData.")
-
-        quadrants = [
-            quadrant_label(str(row["Target 1"]), str(row["Target 2"]))
-            for _, row in well_rows.iterrows()
-        ]
+        x_gate, y_gate, x_gate_method, y_gate_method, label_cols = manual_gate_positions(amp_df, ch1_col, ch2_col)
+        if x_gate is None and y_gate is None:
+            print(f"Plotting {well} without gate lines: no valid manual labels found in amplitude CSV.")
+        manual_summary = summarize_manual_labels(amp_df, ch1_col, ch2_col, label_cols)
         gate_row = {
             "dataset": dataset_id,
             "parent_dataset": dataset_name,
@@ -669,19 +817,19 @@ def process_dataset(
             "x_max_ch2": amp_df[ch2_col].max(),
             "y_min_ch1": amp_df[ch1_col].min(),
             "y_max_ch1": amp_df[ch1_col].max(),
-            "target1(MUT)": "|".join(well_rows["Target 1"].dropna().astype(str).unique()),
-            "target2(WT)": "|".join(well_rows["Target 2"].dropna().astype(str).unique()),
-            "quadrant": "|".join(quadrants),
-            "count": "|".join(well_rows["Count"].dropna().astype(str).unique()),
-            "ch1_mean": "|".join(well_rows["Ch1 Mean"].dropna().astype(str).unique()),
-            "ch2_mean": "|".join(well_rows["Ch2 Mean"].dropna().astype(str).unique()),
+            "target1(MUT)": manual_summary["target1"],
+            "target2(WT)": manual_summary["target2"],
+            "quadrant": manual_summary["quadrant"],
+            "count": manual_summary["count"],
+            "ch1_mean": manual_summary["ch1_mean"],
+            "ch2_mean": manual_summary["ch2_mean"],
         }
         gate_rows.append(gate_row)
         feature_row: dict[str, object] = {"dataset": gate_row["dataset"]}
         feature_row.update(extract_features(amp_df[[ch1_col, ch2_col]].to_numpy(dtype=float)))
         feature_rows.append(feature_row)
         processed_keys.add((dataset_name, dataset_id))
-        if cluster_csv is None:
+        if skip_plots:
             continue
 
         plot_step = max(1, len(amp_df) // 10000)
@@ -702,21 +850,21 @@ def process_dataset(
         if y_gate is not None:
             ax.axhline(y_gate, color="tab:orange", linestyle="--", linewidth=2, alpha=0.9)
 
-        # Show the mean of each quadrant as a marker, useful for validation.
-        for _, row in well_rows.iterrows():
+        # Show the mean of each manual quadrant as a marker, useful for validation.
+        for row in manual_summary["summary_rows"]:
             try:
-                x_mean = float(row["Ch2 Mean"])
-                y_mean = float(row["Ch1 Mean"])
+                x_mean = float(row["ch2_mean"])
+                y_mean = float(row["ch1_mean"])
                 ax.scatter([x_mean], [y_mean], s=12, edgecolors="black", linewidth=0.4, zorder=3)
             except (TypeError, ValueError):
                 pass
 
         ax.set_xlabel("Ch2Amplitude")
         ax.set_ylabel("Ch1Amplitude")
-        if "single_observed_class_amplitude_bound" in {x_gate_method, y_gate_method}:
+        if any("single" in method for method in {x_gate_method, y_gate_method}):
             gate_title = "amplitude-bound gate estimate"
         else:
-            gate_title = "gate from ClusterData"
+            gate_title = "gate from manual labels"
         ax.set_title(f"{well} {gate_title} (Ch2 x, Ch1 y)")
         if x_gate is not None and y_gate is not None:
             ax.text(
@@ -741,7 +889,9 @@ def process_dataset(
         finally:
             plt.close(fig)
 
-    if cluster_csv is not None:
+    if skip_plots:
+        print(f"Done. Plot generation skipped for: {data_dir}")
+    else:
         print(f"Done. PNG files saved under: {out_dir}")
 
 

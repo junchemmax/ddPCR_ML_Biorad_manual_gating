@@ -39,10 +39,10 @@
   "test_rows": 1818,
   "train_groups": 73,
   "test_groups": 19,
-  "model_mae_x_gate": 356.69939559163413,
-  "model_rmse_x_gate": 695.742372889316,
-  "baseline_mae_x_gate": 803.2719670473588,
-  "model_mae_y_gate": 334.4173000666457,
-  "model_rmse_y_gate": 504.65645099716755,
-  "baseline_mae_y_gate": 1458.04690220224
+  "model_mae_x_gate": 390.5646120385025,
+  "model_rmse_x_gate": 647.6429360249393,
+  "baseline_mae_x_gate": 737.6625079207921,
+  "model_mae_y_gate": 342.3780972312955,
+  "model_rmse_y_gate": 482.6914079401386,
+  "baseline_mae_y_gate": 1489.405633250825
 }
