@@ -35,14 +35,14 @@
     "y_gate"
   ],
   "group_column": "parent_dataset",
-  "train_rows": 6895,
-  "test_rows": 1818,
-  "train_groups": 73,
-  "test_groups": 19,
-  "model_mae_x_gate": 390.5646120385025,
-  "model_rmse_x_gate": 647.6429360249393,
-  "baseline_mae_x_gate": 737.6625079207921,
-  "model_mae_y_gate": 342.3780972312955,
-  "model_rmse_y_gate": 482.6914079401386,
-  "baseline_mae_y_gate": 1489.405633250825
+  "train_rows": 11380,
+  "test_rows": 2832,
+  "train_groups": 120,
+  "test_groups": 30,
+  "model_mae_x_gate": 256.6948175610971,
+  "model_rmse_x_gate": 330.2669004385674,
+  "baseline_mae_x_gate": 464.51097275776834,
+  "model_mae_y_gate": 290.5096215503651,
+  "model_rmse_y_gate": 426.5345860997096,
+  "baseline_mae_y_gate": 1230.7066490466102
 }

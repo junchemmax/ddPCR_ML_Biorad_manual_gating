@@ -1,3 +1,4 @@
 ddPCR_data/
 output/
 __pycache__/
+/gating_model_output/biorad_gate_model.joblib

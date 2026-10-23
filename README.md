@@ -85,15 +85,15 @@ Change paths, `TEST_SIZE`, or `RANDOM_STATE` at the top of the script.
 
 | | Train | Test |
 |---|---|---|
-| Wells | 6,895 | 1,818 |
-| Plates | 73 | 19 |
+| Wells | 11,380 | 2,832 |
+| Plates | 120 | 30 |
 
 | Target | Model MAE | Model RMSE | Median baseline MAE |
 |---|---|---|---|
-| `x_gate` (WT) | 391 | 648 | 738 |
-| `y_gate` (MUT) | 342 | 483 | 1,489 |
+| `x_gate` (WT) | 257 | 330 | 465 |
+| `y_gate` (MUT) | 291 | 427 | 1,231 |
 
-Held-out droplet quadrant agreement: 97.0% across 1,818 wells.
+Held-out droplet quadrant agreement: 97.1% across 2,832 wells.
 
 ### Outputs (`model_output/`)
 
