@@ -134,7 +134,11 @@ def main() -> None:
         "q2_q4_neglog10_p", "q12_q4_neglog10_p", "combined_score",
     ]
     print(f"Saved: {OUTPUT_PATH}")
-    print(f"Labeled plates: {wells.loc[wells['plate_labeled'], 'parent_dataset'].nunique()}")
+    positive_plate_count = wells.loc[wells["plate_labeled"], "parent_dataset"].nunique()
+    negative_label_plate_count = wells.loc[~wells["plate_labeled"], "parent_dataset"].nunique()
+    mutant_count = int(wells["is_mutant"].sum())
+    print(f"Plates: {wells['parent_dataset'].nunique()} ({positive_plate_count} with mutant labels, "
+          f"{negative_label_plate_count} without mutant labels)")
     print("\nWithin-plate rank of the known mutant well:")
     print(pd.DataFrame([rank_summary(wells, feature) for feature in features]).round(2).to_string(index=False))
 
@@ -144,7 +148,8 @@ def main() -> None:
     print(labeled.groupby("is_mutant")[columns].median().round(5).T.to_string())
 
     flagged = labeled["poisson_red_flag"]
-    print(f"\nPoisson red flags (p < {POISSON_FLAG_P:g}): mutant {flagged[labeled['is_mutant'] == 1].sum()}/66, "
+    print(f"\nPoisson red flags (p < {POISSON_FLAG_P:g}): mutant "
+          f"{flagged[labeled['is_mutant'] == 1].sum()}/{mutant_count}, "
           f"non-mutant {flagged[labeled['is_mutant'] == 0].sum()}/{(labeled['is_mutant'] == 0).sum()}, "
           f"unlabeled-plate wells {wells.loc[~wells['plate_labeled'], 'poisson_red_flag'].sum()}")
 
@@ -156,11 +161,15 @@ def main() -> None:
         hits = calls & (wells["is_mutant"] == 1)
         rows.append({
             "min_score": min_score,
-            "mutant_found_pct": 100 * hits.sum() / 66,
+            "mutant_found_pct": 100 * hits.sum() / mutant_count if mutant_count else 0,
             "false_calls_labeled": (calls & lab & (wells["is_mutant"] == 0)).sum(),
-            "labeled_plates_no_call": 66 - wells.loc[calls & lab, "parent_dataset"].nunique(),
+            "labeled_plates_no_call": positive_plate_count - wells.loc[calls & lab, "parent_dataset"].nunique(),
             "unlabeled_calls": (calls & ~lab).sum(),
             "unlabeled_plates_called": wells.loc[calls & ~lab, "parent_dataset"].nunique(),
+            "unlabeled_plate_call_pct": (
+                100 * wells.loc[calls & ~lab, "parent_dataset"].nunique() / negative_label_plate_count
+                if negative_label_plate_count else 0
+            ),
         })
     print(pd.DataFrame(rows).round(1).to_string(index=False))
 
