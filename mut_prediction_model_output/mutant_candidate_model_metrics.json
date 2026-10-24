@@ -1,0 +1,51 @@
+{
+  "data_path": "C:\\Users\\HQCHEJUN\\Downloads\\github_projects\\ddPCR_ML_Biorad_manual_gating\\data_output\\mutant_well_features.csv",
+  "plates": 150,
+  "positive_plates": 66,
+  "confirmed_negative_plates": 84,
+  "known_mutant_wells": 66,
+  "known_negative_wells": 14146,
+  "cv_method": "GroupKFold(5) by parent_dataset",
+  "feature_columns": [
+    "log_mut_pos",
+    "log_q4",
+    "log_ratio_q12_q4",
+    "q2_fraction",
+    "fractional_abundance",
+    "poisson_neglog10_p",
+    "q2_neglog10_p",
+    "q1_neglog10_p",
+    "combined_score",
+    "poisson_fit_p"
+  ],
+  "scores_are_calibrated_probabilities": false,
+  "occupancy_warning_p_threshold": 0.001,
+  "occupancy_warning_is_used_for_ranking": false,
+  "limitations": [
+    "Only 66 mutant-positive plates are available.",
+    "All wells on plates absent from mut_info.csv are treated as confirmed negatives.",
+    "Validation metrics are exploratory and use plate-level held-out folds."
+  ],
+  "cross_validation": {
+    "model_only": {
+      "top1_rate": 0.7575757575757576,
+      "top3_rate": 0.9696969696969697,
+      "median_positive_rank": 1.0,
+      "positive_plates": 66,
+      "average_precision": 0.5485542182007904,
+      "roc_auc": 0.9922325188831621
+    },
+    "heuristic_only": {
+      "top1_rate": 0.7424242424242424,
+      "top3_rate": 0.9545454545454546,
+      "median_positive_rank": 1.0,
+      "positive_plates": 66,
+      "average_precision": 0.5309027452457822,
+      "roc_auc": 0.9951699591703834
+    }
+  },
+  "plate_detection_roc_auc": {
+    "model": 0.917027417027417,
+    "heuristic": 0.8958333333333334
+  }
+}

@@ -2,7 +2,7 @@ import os
 
 import numpy as np
 import pandas as pd
-from scipy.stats import poisson
+from scipy.stats import fisher_exact, poisson
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH = os.path.join(PROJECT_DIR, "data_output", "full_biorad_cluster_dataset.csv")
@@ -11,6 +11,7 @@ OUTPUT_PATH = os.path.join(PROJECT_DIR, "data_output", "mutant_well_features.csv
 MAX_MUTANTS_PER_PLATE = 1
 MIN_CALL_SCORE = 5.0
 POISSON_FLAG_P = 1e-3
+OCCUPANCY_WARNING_P = 1e-3
 
 
 def quadrant_counts(row: pd.Series) -> dict[str, int]:
@@ -26,9 +27,18 @@ def poisson_lambda(positive: np.ndarray, total: np.ndarray) -> np.ndarray:
     return -np.log1p(-fraction)
 
 
+def mut_wt_independence_p(row: pd.Series) -> float:
+    table = [
+        [int(row["Q1"]), int(row["Q2"])],
+        [int(row["Q4"]), int(row["Q3"])],
+    ]
+    return float(fisher_exact(table, alternative="two-sided").pvalue)
+
+
 def background_neglog10_p(observed: pd.Series, ratio: pd.Series, base: pd.Series, plates: pd.Series) -> pd.Series:
-    plate_ratio = ratio.groupby(plates).transform("median")
-    expected = np.maximum(plate_ratio, 0.5 / base.clip(lower=1)) * base
+    plate_ratio = ratio.groupby(plates).transform("median").fillna(0)
+    exposure = base.clip(lower=1)
+    expected = np.maximum(plate_ratio, 0.5 / exposure) * exposure
     return -np.log10(np.clip(poisson.sf(observed - 1, expected), 1e-300, 1))
 
 
@@ -102,6 +112,8 @@ def build_features() -> pd.DataFrame:
     upper = poisson.sf(wells["Q1"] - 1, expected_q1)
     wells["poisson_fit_p"] = np.clip(2 * np.minimum(lower, upper), 0, 1)
     wells["poisson_red_flag"] = wells["poisson_fit_p"] < POISSON_FLAG_P
+    wells["mut_wt_independence_p"] = wells.apply(mut_wt_independence_p, axis=1)
+    wells["enrichment_reliability_warning"] = wells["mut_wt_independence_p"] < OCCUPANCY_WARNING_P
     wells["mutant_call"] = call_mutants(wells, MIN_CALL_SCORE)
 
     mutant_ids = set(mutants["dataset"])
@@ -152,6 +164,12 @@ def main() -> None:
           f"{flagged[labeled['is_mutant'] == 1].sum()}/{mutant_count}, "
           f"non-mutant {flagged[labeled['is_mutant'] == 0].sum()}/{(labeled['is_mutant'] == 0).sum()}, "
           f"unlabeled-plate wells {wells.loc[~wells['plate_labeled'], 'poisson_red_flag'].sum()}")
+    reliability_warnings = wells["enrichment_reliability_warning"]
+    print(
+        f"\nMUT/WT occupancy reliability warnings (Fisher p < {OCCUPANCY_WARNING_P:g}): mutant "
+        f"{reliability_warnings[wells['is_mutant'] == 1].sum()}/{mutant_count}, "
+        f"negative {reliability_warnings[wells['is_mutant'] == 0].sum()}/{(wells['is_mutant'] == 0).sum()}"
+    )
 
     print(f"\nCalls (max {MAX_MUTANTS_PER_PLATE}/plate, red-flagged wells excluded):")
     rows = []

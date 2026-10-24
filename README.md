@@ -115,7 +115,19 @@ Uses the quadrant counts in the feature dataset and the known mutant wells in `d
 - **Poisson red flag:** Q1 is compared with the count expected if MUT and WT partition independently (two-sided Poisson test). Wells with p < 0.001 are flagged and never called.
 - **Call:** at most one well per plate (`MAX_MUTANTS_PER_PLATE`), the highest-scoring non-flagged well with `combined_score >= MIN_CALL_SCORE` (default 5).
 
-On the 66 labelled plates, the default setting calls the labelled mutant on 70% of plates, with 17 wrong calls and 3 plates without a call. Low-signal mutants (no Q2 droplets or fewer than ~10 MUT-positive droplets) cannot be separated from background with count features alone.
+On the 66 labelled plates, the default setting calls the labelled mutant on 71% of plates, with 16 wrong calls and 3 plates without a call. Low-signal mutants (no Q2 droplets or fewer than ~10 MUT-positive droplets) cannot be separated from background with count features alone.
+
+### Mutant Candidate Ranking Model
+
+```bash
+python Biorad_manual_gating/train_mutant_candidate_model.py
+```
+
+This trains a regularized logistic ranker. All 150 plates are used as labeled data: the 66 plates listed in `mut_info.csv` have one known mutant well, and the remaining plates are treated as confirmed mutant-free, as annotated for this dataset. Validation uses five-fold `GroupKFold` splits by plate, so wells from one plate are never split between train and test. The model achieved 76% top-1 and 97% top-3 recovery on the 66 positive plates, versus 74% and 95% for `combined_score` alone. Scores are rankings, not calibrated probabilities; results are exploratory because there are only 66 positive plates.
+
+`mutant_well_features.csv` and the ranking exports include `mut_wt_independence_p` (a two-sided Fisher exact test of the quadrant table) and `enrichment_reliability_warning` (`p < 0.001`). This is a warning about consistency with independent MUT/WT occupancy, not a mutant call or artifact diagnosis; it does not change model rankings.
+
+Outputs are written to `mut_prediction_model_output/`: the final fitted ranker, out-of-fold predictions and metrics for all wells, and the top-ranked well for each of the 150 plates. Out-of-fold scores are used for the current dataset exports; the full-data fit is saved for future inference.
 
 ## Data Sync
 
