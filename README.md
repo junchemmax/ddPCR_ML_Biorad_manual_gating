@@ -9,7 +9,7 @@ Build a well-level ddPCR feature dataset from Bio-Rad amplitude exports, train a
 - `Biorad_manual_gating/mutant_well_analysis.py` - scores each well for mutant signal and calls at most one mutant per plate.
 - `ddPCR_data/MIP_XXX/` - raw experiments with `*_Amplitude.csv` exports; plots go to `Biorad_manual_gating_output/`.
 - `data_output/` - generated gate summaries, feature dataset, mutant labels (`mut_info.csv`), and mutant-well scores.
-- `model_output/` - trained model, predictions, metrics, and held-out evaluation reports.
+- `gating_model_output/` - trained model, predictions, metrics, and held-out evaluation reports.
 - `aws_s3_cmd.txt` - example S3 sync commands.
 
 ## Requirements
@@ -78,6 +78,7 @@ python Biorad_manual_gating/train_and_predict_gate_model.py
 5. **Model:** scikit-learn pipeline of `SimpleImputer(strategy="median")` and `RandomForestRegressor(n_estimators=400, min_samples_leaf=3, max_features=0.8, random_state=42)`.
 6. **Baseline:** the training-set median gate, used to judge whether the model adds value.
 7. **Droplet check:** for each held-out well, droplets are assigned to quadrants with both the reference and predicted gates (positive = amplitude strictly above the gate) and compared.
+8. **Final model:** after evaluation, the same pipeline is refit on all eligible wells (14,212 wells, 150 plates). This full-data model is the one saved and used for all-well predictions; the reported metrics come from the 80/20 split model.
 
 Change paths, `TEST_SIZE`, or `RANDOM_STATE` at the top of the script.
 
@@ -95,12 +96,12 @@ Change paths, `TEST_SIZE`, or `RANDOM_STATE` at the top of the script.
 
 Held-out droplet quadrant agreement: 97.1% across 2,832 wells.
 
-### Outputs (`model_output/`)
+### Outputs (`gating_model_output/`)
 
-- `biorad_gate_model.joblib` - fitted pipeline.
-- `biorad_gate_model_metrics.json`, `biorad_gate_model_predictions.csv` - held-out metrics and predictions.
-- `biorad_gate_predictions_all_wells.csv` - predictions for every well (includes training wells, so not an independent test).
-- `biorad_gate_feature_importance.csv` - Random Forest feature importance.
+- `biorad_gate_model.joblib` - pipeline refit on all eligible wells.
+- `biorad_gate_model_metrics.json`, `biorad_gate_model_predictions.csv` - held-out metrics and predictions from the 80/20 split model.
+- `biorad_gate_predictions_all_wells.csv` - full-data model predictions for every well (all wells were used in training, so not an independent test).
+- `biorad_gate_feature_importance.csv` - Random Forest feature importance of the full-data model.
 - `heldout_droplet_comparison.csv`, `heldout_experiment_comparison.csv`, `heldout_quadrant_confusion.csv`, `heldout_droplet_evaluation_summary.json`, `heldout_droplet_evaluation_failures.csv` - droplet-level evaluation.
 
 ## 4. Mutant-Well Analysis

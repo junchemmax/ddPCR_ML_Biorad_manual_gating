@@ -39,10 +39,12 @@
   "test_rows": 2832,
   "train_groups": 120,
   "test_groups": 30,
-  "model_mae_x_gate": 256.6948175610971,
+  "model_mae_x_gate": 256.694817561097,
   "model_rmse_x_gate": 330.2669004385674,
   "baseline_mae_x_gate": 464.51097275776834,
   "model_mae_y_gate": 290.5096215503651,
   "model_rmse_y_gate": 426.5345860997096,
-  "baseline_mae_y_gate": 1230.7066490466102
+  "baseline_mae_y_gate": 1230.7066490466102,
+  "final_model_train_rows": 14212,
+  "final_model_train_groups": 150
 }

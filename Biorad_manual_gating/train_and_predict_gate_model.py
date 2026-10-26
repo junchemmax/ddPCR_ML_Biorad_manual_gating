@@ -1,6 +1,8 @@
 """Train, predict, and evaluate the Bio-Rad gate model.
 
-Reference labels are reconstructed gates, not original saved Bio-Rad UI coordinates.
+Metrics come from a model trained on a plate-grouped 80/20 split; the saved model is then
+refit on all eligible wells. Reference labels are reconstructed gates, not original saved
+Bio-Rad UI coordinates.
 All-well predictions include training wells and are not independent test results.
 """
 import json
@@ -17,7 +19,7 @@ from sklearn.pipeline import make_pipeline
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 DATA_PATH = PROJECT_DIR / "data_output" / "full_biorad_cluster_dataset.csv"
-OUTPUT_DIR = PROJECT_DIR / "model_output"
+OUTPUT_DIR = PROJECT_DIR / "gating_model_output"
 MODEL_PATH = OUTPUT_DIR / "biorad_gate_model.joblib"
 METRICS_PATH = OUTPUT_DIR / "biorad_gate_model_metrics.json"
 TEST_PREDICTIONS_PATH = OUTPUT_DIR / "biorad_gate_model_predictions.csv"
@@ -40,6 +42,16 @@ LEAKED_COLUMNS = {
 
 def show(frame: pd.DataFrame) -> None:
     print(frame.to_string(), end="\n\n")
+
+
+def make_model():
+    return make_pipeline(
+        SimpleImputer(strategy="median"),
+        RandomForestRegressor(
+            n_estimators=400, min_samples_leaf=3, max_features=0.8,
+            random_state=RANDOM_STATE, n_jobs=-1,
+        ),
+    )
 
 
 def select_feature_columns(data: pd.DataFrame) -> list[str]:
@@ -81,13 +93,7 @@ def train_and_evaluate(data: pd.DataFrame) -> list[str]:
         "groups": [groups.iloc[train_idx].nunique(), groups.iloc[test_idx].nunique()],
     }))
 
-    model = make_pipeline(
-        SimpleImputer(strategy="median"),
-        RandomForestRegressor(
-            n_estimators=400, min_samples_leaf=3, max_features=0.8,
-            random_state=RANDOM_STATE, n_jobs=-1,
-        ),
-    )
+    model = make_model()
     model.fit(data.iloc[train_idx][feature_columns], data.iloc[train_idx][TARGET_COLUMNS])
     test_predictions = model.predict(data.iloc[test_idx][feature_columns])
 
@@ -110,11 +116,17 @@ def train_and_evaluate(data: pd.DataFrame) -> list[str]:
     predictions_df["predicted_y_gate"] = test_predictions[:, 1]
     predictions_df["x_gate_error"] = predictions_df["predicted_x_gate"] - predictions_df["x_gate"]
     predictions_df["y_gate_error"] = predictions_df["predicted_y_gate"] - predictions_df["y_gate"]
-    forest = model.named_steps["randomforestregressor"]
+
+    final_model = make_model()
+    final_model.fit(data[feature_columns], data[TARGET_COLUMNS])
+    metrics["final_model_train_rows"] = int(len(data))
+    metrics["final_model_train_groups"] = int(groups.nunique())
+    print(f"Final model refit on all {len(data)} wells from {groups.nunique()} plates")
+    forest = final_model.named_steps["randomforestregressor"]
     importance_df = pd.DataFrame({"feature": feature_columns, "importance": forest.feature_importances_}).sort_values("importance", ascending=False)
     show(importance_df.head(15))
 
-    joblib.dump(model, MODEL_PATH)
+    joblib.dump(final_model, MODEL_PATH)
     with METRICS_PATH.open("w", encoding="utf-8") as metrics_file:
         json.dump(metrics, metrics_file, indent=2)
     predictions_df.to_csv(TEST_PREDICTIONS_PATH, index=False)
