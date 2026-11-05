@@ -1,0 +1,3 @@
+project,plates,trial1_wells,trial2_wells,same_top_candidate_plates,mean_well_quadrant_agreement_with_manual_pct,trial1_mut_positive_droplets,trial2_mut_positive_droplets,trial1_poisson_flagged_wells,trial2_poisson_flagged_wells
+MIP_122,14,1343,1343,6,99.65699285445626,57265,30844,0,0
+MIP_124,15,1438,1438,2,99.28572320816772,84015,1749,293,1

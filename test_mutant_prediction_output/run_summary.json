@@ -1,0 +1,77 @@
+{
+  "input_directory": "C:\\Users\\HQCHEJUN\\Downloads\\github_projects\\ddPCR_ML_Biorad_manual_gating\\test_data",
+  "input_csvs": 2784,
+  "trial1_wells": 2781,
+  "trial2_wells": 2781,
+  "plates": 29,
+  "excluded_records": [
+    {
+      "project": "MIP_122",
+      "dataset": "230418_MIP122_1_421_10_20230418_154208_859_A06_Amplitude",
+      "parent_dataset": "230418_MIP122_1_421_10_20230418_154208_859",
+      "well": "A06",
+      "trial": "both",
+      "reason": "No finite amplitude observations"
+    },
+    {
+      "project": "MIP_124",
+      "dataset": "230421_TRT18_510_MIP124_20230421_151601_599_E07_Amplitude",
+      "parent_dataset": "230421_TRT18_510_MIP124_20230421_151601_599",
+      "well": "E07",
+      "trial": "both",
+      "reason": "No finite amplitude observations"
+    },
+    {
+      "project": "MIP_124",
+      "dataset": "230421_TRT18_510_MIP124_20230421_151601_599_F07_Amplitude",
+      "parent_dataset": "230421_TRT18_510_MIP124_20230421_151601_599",
+      "well": "F07",
+      "trial": "both",
+      "reason": "No finite amplitude observations"
+    }
+  ],
+  "plates_with_same_top_candidates": 8,
+  "projects": [
+    {
+      "project": "MIP_122",
+      "plates": 14,
+      "trial1_wells": 1343,
+      "trial2_wells": 1343,
+      "same_top_candidate_plates": 6,
+      "mean_well_quadrant_agreement_with_manual_pct": 99.65699285445626,
+      "trial1_mut_positive_droplets": 57265,
+      "trial2_mut_positive_droplets": 30844,
+      "trial1_poisson_flagged_wells": 0,
+      "trial2_poisson_flagged_wells": 0
+    },
+    {
+      "project": "MIP_124",
+      "plates": 15,
+      "trial1_wells": 1438,
+      "trial2_wells": 1438,
+      "same_top_candidate_plates": 2,
+      "mean_well_quadrant_agreement_with_manual_pct": 99.28572320816772,
+      "trial1_mut_positive_droplets": 84015,
+      "trial2_mut_positive_droplets": 1749,
+      "trial1_poisson_flagged_wells": 293,
+      "trial2_poisson_flagged_wells": 1
+    }
+  ],
+  "test_well_ids_also_in_training": 0,
+  "mean_well_quadrant_agreement_with_manual_pct": 99.46501667633221,
+  "model_sha256": {
+    "C:\\Users\\HQCHEJUN\\Downloads\\github_projects\\ddPCR_ML_Biorad_manual_gating\\gating_model_output\\biorad_gate_model.joblib": "970b2543872b9a2814858c00a5b425d11b597d9f85dc859ef34425d1b8052cb3",
+    "C:\\Users\\HQCHEJUN\\Downloads\\github_projects\\ddPCR_ML_Biorad_manual_gating\\mut_prediction_model_output\\mutant_candidate_ranker.joblib": "95391761fd7c074b48433752a21cc632790bbb539b637c4a720db9947f5c8e0f"
+  },
+  "notes": [
+    "Saved models used for inference only; no training or retraining.",
+    "Trial 1 uses only amplitudes to predict gates and quadrant counts.",
+    "Trial 2 uses the existing manual labels directly; u/unknown labels are excluded.",
+    "Same plate-background features and red-flag suppression as mutant model training.",
+    "Ranks are not probabilities or confirmed mutant calls; no test ground truth supplied.",
+    "All rank ties are preserved. Top candidates means unflagged rank <= 3.",
+    "mutant_call is the existing heuristic call, not the trained model prediction.",
+    "A rank-1 well can have no MUT or no WT signal: inspect both no_*_positive_droplets columns.",
+    "High overall quadrant agreement can conceal large changes in rare MUT-positive counts."
+  ]
+}

@@ -6,10 +6,12 @@ Build a well-level ddPCR feature dataset from Bio-Rad amplitude exports, train a
 
 - `Biorad_manual_gating/build_biorad_gate_dataset.py` - builds manual-label gate summaries, diagnostic plots, and the feature dataset.
 - `Biorad_manual_gating/train_and_predict_gate_model.py` - trains the gate model, predicts all wells, and evaluates held-out droplet classification.
+- `Biorad_manual_gating/compare_normalized_gate_model.py` - compares an experimental per-well normalized gate model against the raw-amplitude model without replacing it.
 - `Biorad_manual_gating/mutant_well_analysis.py` - scores each well for mutant signal and calls at most one mutant per plate.
 - `ddPCR_data/MIP_XXX/` - raw experiments with `*_Amplitude.csv` exports; plots go to `Biorad_manual_gating_output/`.
 - `data_output/` - generated gate summaries, feature dataset, mutant labels (`mut_info.csv`), and mutant-well scores.
 - `gating_model_output/` - trained model, predictions, metrics, and held-out evaluation reports.
+- `gating_normalization_experiment/` - held-out comparison outputs for the experimental normalized gate model.
 - `aws_s3_cmd.txt` - example S3 sync commands.
 
 ## Requirements
@@ -104,6 +106,27 @@ Held-out droplet quadrant agreement: 97.1% across 2,832 wells.
 - `biorad_gate_feature_importance.csv` - Random Forest feature importance of the full-data model.
 - `heldout_droplet_comparison.csv`, `heldout_experiment_comparison.csv`, `heldout_quadrant_confusion.csv`, `heldout_droplet_evaluation_summary.json`, `heldout_droplet_evaluation_failures.csv` - droplet-level evaluation.
 
+### Per-well normalization experiment
+
+Run the comparison without changing the saved production model:
+
+```bash
+python Biorad_manual_gating/compare_normalized_gate_model.py
+```
+
+For each well and channel, this experiment centers amplitudes by that well's median and scales by its IQR. It predicts the manual gate in normalized coordinates and converts the prediction back to raw amplitude units. It uses the same plate-grouped 80/20 split as the production evaluation (11,380 training wells / 120 plates; 2,832 held-out wells / 30 plates). To avoid unstable or incompatible inputs after centering, the normalized model excludes the channel CV and log-statistic features.
+
+| Held-out metric | Raw-amplitude model | Normalized model |
+|---|---:|---:|
+| x-gate MAE | 256.7 | 215.7 |
+| x-gate RMSE | 330.3 | 333.5 |
+| y-gate MAE | 290.5 | 213.8 |
+| y-gate RMSE | 426.5 | 339.0 |
+| Pooled quadrant agreement across 43.49M droplets | 97.057% | 98.508% |
+| Wells with at least 99% quadrant agreement | 2,240 | 2,499 |
+
+This single split is promising, especially for y-gate MAE and droplet agreement, but is not enough to replace the production model: the normalized model had lower mean plate agreement on 16 of 30 held-out plates, and a few individual wells still had near-total WT classification shifts. The experiment is exploratory, uses the complete unlabeled amplitude distribution of each well at inference, and does not save or overwrite a model. Results are written to `gating_normalization_experiment/summary.json`, `heldout_well_comparison.csv`, and `heldout_plate_comparison.csv`.
+
 ## 4. Mutant-Well Analysis
 
 ```bash
@@ -129,6 +152,34 @@ This trains a regularized logistic ranker. All 150 plates are used as labeled da
 `mutant_well_features.csv` and the ranking exports include `mut_wt_independence_p` (a two-sided Fisher exact test of the quadrant table) and `enrichment_reliability_warning` (`p < 0.001`). This is a warning about consistency with independent MUT/WT occupancy, not a mutant call or artifact diagnosis; it does not change model rankings.
 
 Outputs are written to `mut_prediction_model_output/`: the final fitted ranker, out-of-fold predictions and metrics for all wells, and the top-ranked well for each of the 150 plates. Out-of-fold scores are used for the current dataset exports; the full-data fit is saved for future inference.
+
+## 5. Mutant Prediction on New Amplitude Files
+
+```bash
+python Biorad_manual_gating/predict_test_mutants.py test_data
+```
+
+Uses the saved full-data gate model and mutant ranker without retraining:
+
+1. **Trial 1:** extract label-free amplitude features, predict gates, assign quadrants, and rank wells with the mutant model.
+2. **Trial 2:** count the existing manual classifications directly and use the same mutant model. Droplets without both labels in `0`/`1` are excluded; reconstructed gates are not used in this trial.
+
+Plate identity comes from the filename prefix before `_A01_Amplitude.csv` (or another well), not the shared `amplitude_files` folder. This preserves the plate-specific background features used during training. Nonfinite amplitude observations are excluded in both trials, and empty wells are listed in `excluded_wells.csv`.
+
+Outputs default to `test_mutant_prediction_output/` (override with `--output-dir`):
+
+- `trial1_predicted_gates_all_wells.csv`, `trial2_existing_labels_all_wells.csv`: quadrant counts, model scores, ranks, heuristic calls, and quality warnings.
+- `trial1_predicted_gates_top_candidates.csv`, `trial2_existing_labels_top_candidates.csv`: unflagged wells with model rank <= 3; ties are retained.
+- `plate_comparison.csv`, `project_comparison.csv`: top-candidate agreement and project-level differences.
+- `run_summary.json`: input coverage, exclusions, model checksums, and interpretation notes.
+
+Ranked candidates are not confirmed mutants, and scores are not calibrated probabilities. The existing Poisson red-flag suppression is retained. A rank-1 well can still have no mutant or WT signal: inspect `no_mutant_positive_droplets`, `no_wt_positive_droplets`, and the quadrant counts. `mutant_call` is the separate existing heuristic, not a thresholded model call. The Fisher occupancy warning is informational and does not change model rankings. Without known test labels, agreement between trials does not establish accuracy.
+
+Focused checks:
+
+```bash
+python -m unittest discover -s Biorad_manual_gating -p test_predict_test_mutants.py -v
+```
 
 ## Data Sync
 

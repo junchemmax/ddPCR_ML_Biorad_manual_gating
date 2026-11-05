@@ -48,9 +48,8 @@ def call_mutants(wells: pd.DataFrame, min_score: float) -> pd.Series:
     return wells.index.isin(top.index)
 
 
-def build_features() -> pd.DataFrame:
-    data = pd.read_csv(DATA_PATH)
-    mutants = pd.read_csv(MUT_PATH)
+def features_from_gate_data(data: pd.DataFrame) -> pd.DataFrame:
+    data = data.reset_index(drop=True)
     counts = pd.DataFrame([quadrant_counts(row) for _, row in data.iterrows()])
     wells = pd.concat([data[["dataset", "parent_dataset", "well"]], counts], axis=1)
 
@@ -115,7 +114,13 @@ def build_features() -> pd.DataFrame:
     wells["mut_wt_independence_p"] = wells.apply(mut_wt_independence_p, axis=1)
     wells["enrichment_reliability_warning"] = wells["mut_wt_independence_p"] < OCCUPANCY_WARNING_P
     wells["mutant_call"] = call_mutants(wells, MIN_CALL_SCORE)
+    return wells
 
+
+def build_features() -> pd.DataFrame:
+    data = pd.read_csv(DATA_PATH)
+    mutants = pd.read_csv(MUT_PATH)
+    wells = features_from_gate_data(data)
     mutant_ids = set(mutants["dataset"])
     labeled_plates = set(wells.loc[wells["dataset"].isin(mutant_ids), "parent_dataset"])
     wells["plate_labeled"] = wells["parent_dataset"].isin(labeled_plates)

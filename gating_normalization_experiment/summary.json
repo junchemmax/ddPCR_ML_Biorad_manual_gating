@@ -1,0 +1,109 @@
+{
+  "normalization": "per-well channel median and IQR",
+  "normalized_channels": "each well and channel is centered by its amplitude median and divided by its IQR",
+  "normalized_target": "(manual_gate - channel_median) / channel_IQR",
+  "raw_gate_reconstruction": "channel_median + predicted_normalized_gate * channel_IQR",
+  "normalized_feature_columns": [
+    "x_min_ch2",
+    "x_max_ch2",
+    "y_min_ch1",
+    "y_max_ch1",
+    "amplitude_range_WT",
+    "amplitude_range_MUT",
+    "n_droplets",
+    "ch1_std",
+    "ch1_iqr",
+    "ch1_skew",
+    "ch1_kurt",
+    "ch1_bimodality",
+    "ch1_outlier_frac",
+    "ch1_kde_peaks",
+    "ch2_std",
+    "ch2_iqr",
+    "ch2_skew",
+    "ch2_kurt",
+    "ch2_bimodality",
+    "ch2_outlier_frac",
+    "ch2_kde_peaks",
+    "ch1_ch2_corr"
+  ],
+  "excluded_features": {
+    "ch1_cv": "unstable because normalized amplitudes are median-centered",
+    "ch1_log_skew": "excluded because normalized amplitudes can be negative",
+    "ch1_log_std": "excluded because normalized amplitudes can be negative",
+    "ch2_cv": "unstable because normalized amplitudes are median-centered",
+    "ch2_log_skew": "excluded because normalized amplitudes can be negative",
+    "ch2_log_std": "excluded because normalized amplitudes can be negative"
+  },
+  "input_dataset": "C:\\Users\\HQCHEJUN\\Downloads\\github_projects\\ddPCR_ML_Biorad_manual_gating\\data_output\\full_biorad_cluster_dataset.csv",
+  "amplitude_root": "C:\\Users\\HQCHEJUN\\Downloads\\github_projects\\ddPCR_ML_Biorad_manual_gating\\ddPCR_data",
+  "split": {
+    "method": "GroupShuffleSplit",
+    "group_column": "parent_dataset",
+    "test_size": 0.2,
+    "random_state": 42,
+    "train_wells": 11380,
+    "test_wells": 2832,
+    "train_plates": 120,
+    "test_plates": 30
+  },
+  "scale_method_counts_across_channels": {
+    "iqr": 28424
+  },
+  "baseline_gate_metrics": {
+    "mae_x_gate": 256.69481756109707,
+    "rmse_x_gate": 330.2669004385674,
+    "mae_y_gate": 290.5096215503651,
+    "rmse_y_gate": 426.5345860997096
+  },
+  "normalized_gate_metrics": {
+    "mae_x_gate": 215.69267805488576,
+    "rmse_x_gate": 333.46406133310944,
+    "mae_y_gate": 213.8249727728476,
+    "rmse_y_gate": 339.03842668716777
+  },
+  "baseline_training_median_gate_mae": {
+    "mae_x_gate": 464.51097275776834,
+    "rmse_x_gate": 592.1872132438409,
+    "mae_y_gate": 1230.7066490466102,
+    "rmse_y_gate": 1590.6382494119803
+  },
+  "normalized_target_median_gate_mae": {
+    "mae_x_gate": 955.3897861560525,
+    "rmse_x_gate": 1126.8706147676396,
+    "mae_y_gate": 387.06405768316324,
+    "rmse_y_gate": 601.9967445251242
+  },
+  "droplet_metrics": {
+    "heldout_wells": 2832,
+    "heldout_droplets": 43489809,
+    "baseline_mean_well_quadrant_agreement_pct": 97.31613104124814,
+    "baseline_median_well_quadrant_agreement_pct": 99.92491623527113,
+    "baseline_p10_well_quadrant_agreement_pct": 94.62353458472046,
+    "baseline_wells_at_least_99pct_agreement": 2240,
+    "baseline_mean_abs_MUT_positive_shift_pp": 0.09208391187106187,
+    "baseline_p95_abs_MUT_positive_shift_pp": 0.0939538661581633,
+    "baseline_max_abs_MUT_positive_shift_pp": 22.026648311126408,
+    "baseline_mean_abs_WT_positive_shift_pp": 2.599816878487399,
+    "baseline_p95_abs_WT_positive_shift_pp": 11.89030690707766,
+    "baseline_max_abs_WT_positive_shift_pp": 98.68870578778134,
+    "baseline_pooled_quadrant_agreement_pct": 97.0565678961708,
+    "normalized_mean_well_quadrant_agreement_pct": 98.53978896741476,
+    "normalized_median_well_quadrant_agreement_pct": 99.96254633487698,
+    "normalized_p10_well_quadrant_agreement_pct": 98.40751211999068,
+    "normalized_wells_at_least_99pct_agreement": 2499,
+    "normalized_mean_abs_MUT_positive_shift_pp": 0.00696608791144273,
+    "normalized_p95_abs_MUT_positive_shift_pp": 0.030329787124687892,
+    "normalized_max_abs_MUT_positive_shift_pp": 0.36743744060817235,
+    "normalized_mean_abs_WT_positive_shift_pp": 1.4534302168771582,
+    "normalized_p95_abs_WT_positive_shift_pp": 6.148020709587953,
+    "normalized_max_abs_WT_positive_shift_pp": 99.99016667486111,
+    "normalized_pooled_quadrant_agreement_pct": 98.50768716873418
+  },
+  "limitations": [
+    "This is one plate-grouped 80/20 split, not cross-validation.",
+    "Manual gate targets are reconstructed from the existing droplet labels.",
+    "Per-well normalization uses all unlabeled amplitudes in that well; it is valid only when the complete well's amplitudes are available at prediction time.",
+    "The normalized model is experimental and was not saved over the production model."
+  ]
+}
